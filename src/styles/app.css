@@ -1,0 +1,22 @@
+@import 'tailwindcss' source('../');
+@import '../ui/theme.css';
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-border-default, currentcolor);
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  .using-mouse * {
+    outline: none !important;
+  }
+}

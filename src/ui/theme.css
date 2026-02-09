@@ -1,0 +1,497 @@
+/**
+ * Brutalist Cyberpunk Design System
+ * Theme definitions and custom properties
+ */
+
+@layer base {
+  :root {
+    /* ============================================
+       PRIMITIVE TOKENS - Raw values
+       ============================================ */
+
+    /* Colors - Brutalist Cyberpunk Palette */
+    --color-black: #000000;
+    --color-pure-white: #fafafa;
+
+    /* Orange primary scale (CP2077 warning/danger tones) */
+    --color-orange-700: #c2410c;
+    --color-orange-600: #ea580c;
+    --color-orange-500: #f97316;
+    --color-orange-400: #fb923c;
+    --color-orange-glow: rgba(234, 88, 12, 0.4);
+
+    /* Grays - harsh, high contrast steps */
+    --color-gray-950: #0a0a0a;
+    --color-gray-900: #171717;
+    --color-gray-800: #262626;
+    --color-gray-700: #404040;
+    --color-gray-600: #525252;
+    --color-gray-500: #737373;
+    --color-gray-400: #a3a3a3;
+    --color-gray-300: #d4d4d4;
+    --color-gray-200: #e5e5e5;
+    --color-gray-100: #f5f5f5;
+
+    /* Secondary accents - limited palette */
+    --color-cyan-500: #06b6d4;
+    --color-yellow-500: #eab308;
+
+    /* Chart colors - OKLCH gamut-optimized palette
+       Each hue tuned to its max chroma within sRGB gamut */
+    --color-chart-1: oklch(0.65 0.26 30);  /* Orange */
+    --color-chart-2: oklch(0.75 0.18 190); /* Cyan - punchier */
+    --color-chart-3: oklch(0.88 0.21 95);  /* Yellow - push brighter */
+    --color-chart-4: oklch(0.58 0.32 285); /* Ultraviolet - more pop */
+    --color-chart-5: oklch(0.72 0.2 150);  /* Green */
+    --color-chart-6: oklch(0.68 0.24 0);   /* Pink */
+    --color-chart-7: oklch(0.58 0.28 250); /* Blue - electric */
+    --color-chart-8: oklch(0.7 0.22 50);   /* Amber */
+
+    /* ============================================
+       SEMANTIC TOKENS - Purpose-based
+       ============================================ */
+
+    /* Surfaces */
+    --color-surface-base: var(--color-black);
+    --color-surface-elevated: var(--color-gray-950);
+    --color-surface-card: var(--color-gray-950);
+    --color-surface-card-hover: var(--color-gray-900);
+
+    /* Text */
+    --color-text-primary: var(--color-pure-white);
+    --color-text-secondary: var(--color-gray-500);
+    --color-text-tertiary: var(--color-gray-600);
+    --color-text-inverse: var(--color-black);
+
+    /* Borders */
+    --color-border-default: var(--color-gray-800);
+    --color-border-strong: var(--color-gray-500);
+    --color-border-accent: var(--color-orange-600);
+
+    /* Interactive states */
+    --color-primary: var(--color-orange-600);
+    --color-primary-hover: var(--color-orange-500);
+    --color-primary-active: var(--color-orange-700);
+    --color-primary-glow: var(--color-orange-glow);
+
+    /* Status colors */
+    --color-danger: var(--color-orange-600);
+    --color-warning: var(--color-yellow-500);
+    --color-info: var(--color-cyan-500);
+
+    /* ============================================
+       SPACING SCALE - Brutalist spacing
+       ============================================ */
+
+    --spacing-0: 0;
+    --spacing-1: 0.25rem;   /* 4px */
+    --spacing-2: 0.5rem;    /* 8px */
+    --spacing-3: 0.75rem;   /* 12px */
+    --spacing-4: 1rem;      /* 16px */
+    --spacing-5: 1.5rem;    /* 24px */
+    --spacing-6: 2rem;      /* 32px */
+    --spacing-8: 3rem;      /* 48px */
+    --spacing-10: 4rem;     /* 64px */
+
+    /* ============================================
+       TYPOGRAPHY - Dual font system
+       ============================================ */
+
+    /* Font families */
+    --font-display: 'Chakra Petch', system-ui, sans-serif;
+    --font-cursive: 'Cedarville Cursive', cursive;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', monospace;
+
+    /* Font sizes */
+    --text-xs: 0.6875rem;   /* 11px */
+    --text-sm: 0.75rem;     /* 12px */
+    --text-base: 0.875rem;  /* 14px */
+    --text-lg: 1rem;        /* 16px */
+    --text-xl: 1.25rem;     /* 20px */
+    --text-2xl: 1.5rem;     /* 24px */
+    --text-3xl: 2rem;       /* 32px */
+
+    /* Letter spacing - wide for brutalist feel */
+    --tracking-wide: 0.05em;
+    --tracking-wider: 0.1em;
+    --tracking-widest: 0.15em;
+
+    /* Line heights */
+    --leading-none: 1;
+    --leading-tight: 1.25;
+    --leading-normal: 1.5;
+
+    /* ============================================
+       BORDERS - Harsh, thick borders
+       ============================================ */
+
+    /* All borders are hairline for clean brutalist look */
+    --border-width-thin: 1px;
+    --border-width-default: 1px;
+    --border-width-thick: 1px;
+    --border-width-heavy: 1px;
+
+    /* Border radius - NONE for brutalist */
+    --radius-none: 0;
+
+    /* ============================================
+       CORNER NOTCH CLIPS
+       ============================================ */
+
+    /* Notch sizes for clipped corners */
+    --notch-sm: 8px;
+    --notch-md: 12px;
+    --notch-lg: 16px;
+
+    /* Clip paths for top-right corner notch */
+    --clip-notch-sm: polygon(0 0, calc(100% - var(--notch-sm)) 0, 100% var(--notch-sm), 100% 100%, 0 100%);
+    --clip-notch-md: polygon(0 0, calc(100% - var(--notch-md)) 0, 100% var(--notch-md), 100% 100%, 0 100%);
+    --clip-notch-lg: polygon(0 0, calc(100% - var(--notch-lg)) 0, 100% var(--notch-lg), 100% 100%, 0 100%);
+
+    /* ============================================
+       ANIMATIONS - Fast, harsh transitions
+       ============================================ */
+
+    --duration-instant: 50ms;
+    --duration-fast: 100ms;
+    --duration-normal: 150ms;
+    --duration-slow: 250ms;
+
+    /* Easing - sharp, digital */
+    --ease-linear: linear;
+    --ease-sharp: cubic-bezier(0.4, 0, 0.6, 1);
+    --ease-digital: steps(4);
+
+    /* ============================================
+       Z-INDEX SCALE
+       ============================================ */
+
+    --z-base: 0;
+    --z-elevated: 10;
+    --z-dropdown: 100;
+    --z-modal: 1000;
+    --z-notification: 10000;
+  }
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+@layer utilities {
+  /* Surface utilities */
+  .surface-base {
+    background-color: var(--color-surface-base);
+  }
+
+  .surface-card {
+    background-color: var(--color-surface-card);
+  }
+
+  .surface-elevated {
+    background-color: var(--color-surface-elevated);
+  }
+
+  .surface-card-hover {
+    background-color: var(--color-surface-card-hover);
+  }
+
+  /* Border utilities - all hairline */
+  .border-default {
+    border-color: var(--color-border-default);
+    border-width: 1px;
+  }
+
+  .border-accent {
+    border-color: var(--color-border-accent);
+    border-width: 1px;
+  }
+
+  /* Corner notch utilities */
+  .clip-path-none {
+    clip-path: none;
+  }
+
+  .notch-sm {
+    clip-path: var(--clip-notch-sm);
+  }
+
+  .notch-md {
+    clip-path: var(--clip-notch-md);
+  }
+
+  .notch-lg {
+    clip-path: var(--clip-notch-lg);
+  }
+
+  /* Typography utilities */
+  .text-display {
+    font-family: var(--font-display);
+  }
+
+  .text-mono {
+    font-family: var(--font-mono);
+  }
+
+  .text-brutal {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+    font-weight: 600;
+  }
+
+  .text-code {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+
+  /* Animation utilities */
+  .transition-brutal {
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--ease-sharp);
+  }
+
+  .press-effect {
+    transition: transform var(--duration-fast) var(--ease-sharp);
+  }
+
+  .press-effect:active {
+    transform: scale(0.98);
+  }
+
+  /* Hover border accent effect */
+  .hover-accent {
+    transition: border-color var(--duration-fast) var(--ease-sharp);
+  }
+
+  .hover-accent:hover {
+    border-color: var(--color-border-accent);
+  }
+
+  /* Hover saturation effect - increases vibrancy on hover */
+  .hover-saturate {
+    transition: filter var(--duration-fast) var(--ease-sharp);
+  }
+
+  .hover-saturate:hover {
+    filter: saturate(1.3) brightness(1.1);
+  }
+
+  .hover-saturate:active {
+    filter: saturate(1.5) brightness(1.15);
+  }
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+@layer base {
+  body {
+    background-color: var(--color-surface-base);
+    color: var(--color-text-primary);
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1 {
+    font-family: var(--font-cursive);
+  }
+
+  /* Code elements use mono font */
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+  }
+
+  /* Remove default border radius from all elements - brutalist requirement */
+  *,
+  *::before,
+  *::after {
+    border-radius: var(--radius-none) !important;
+  }
+
+  /* ============================================
+     CUSTOMIZABLE SELECT (Chrome 135+)
+     ============================================ */
+
+  /* Enable customizable select styling */
+  select.styled-select,
+  select.styled-select::picker(select) {
+    appearance: base-select;
+  }
+
+  /* Style the dropdown picker container */
+  select.styled-select::picker(select) {
+    background-color: var(--color-black);
+    border: 1px solid var(--color-border-default);
+    padding: 0.25rem 0;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-sharp) allow-discrete;
+  }
+
+  select.styled-select::picker(select):popover-open {
+    opacity: 1;
+  }
+
+  @starting-style {
+    select.styled-select::picker(select):popover-open {
+      opacity: 0;
+    }
+  }
+
+  /* Style the picker icon (dropdown arrow) */
+  select.styled-select::picker-icon {
+    color: var(--color-text-secondary);
+    width: 0.75rem;
+    height: 0.75rem;
+    transition: rotate var(--duration-fast) var(--ease-sharp);
+  }
+
+  select.styled-select:open::picker-icon {
+    rotate: 180deg;
+  }
+
+  /* Style individual options */
+  select.styled-select option {
+    font-family: var(--font-display);
+    padding: 0.5rem 1rem;
+    color: var(--color-text-primary);
+    background-color: transparent;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast) var(--ease-sharp),
+      color var(--duration-fast) var(--ease-sharp);
+  }
+
+  /* Option hover/focus state - accent bg with black text */
+  select.styled-select option:hover,
+  select.styled-select option:focus {
+    background-color: var(--color-primary);
+    color: var(--color-text-inverse);
+  }
+
+  /* Hide currently selected option from dropdown */
+  select.styled-select option:checked {
+    display: none;
+  }
+
+  /* Hide the default checkmark */
+  select.styled-select option::checkmark {
+    display: none;
+  }
+
+  /* ============================================
+     SLIDER / RANGE INPUT
+     ============================================ */
+
+  /* Track styling */
+  .slider-input::-webkit-slider-runnable-track {
+    height: 100%;
+    background: transparent;
+  }
+
+  .slider-input::-moz-range-track {
+    height: 100%;
+    background: transparent;
+  }
+
+  /* Thumb styling */
+  .slider-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 0.75rem;
+    height: 0.75rem;
+    margin-top: -0.25rem;
+    background-color: var(--color-primary);
+    border: none;
+    cursor: pointer;
+    transition: filter var(--duration-fast) var(--ease-sharp);
+  }
+
+  .slider-input::-moz-range-thumb {
+    width: 0.75rem;
+    height: 0.75rem;
+    background-color: var(--color-primary);
+    border: none;
+    cursor: pointer;
+    transition: filter var(--duration-fast) var(--ease-sharp);
+  }
+
+  .slider-input:hover::-webkit-slider-thumb {
+    filter: saturate(1.3) brightness(1.1);
+  }
+
+  .slider-input:hover::-moz-range-thumb {
+    filter: saturate(1.3) brightness(1.1);
+  }
+
+  .slider-input:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+  }
+
+  .slider-input:disabled::-moz-range-thumb {
+    cursor: not-allowed;
+  }
+
+  /* ============================================
+     COLOR INPUT
+     ============================================ */
+
+  .color-input::-webkit-color-swatch-wrapper {
+    padding: 2px;
+  }
+
+  .color-input::-webkit-color-swatch {
+    border: none;
+  }
+
+  .color-input::-moz-color-swatch {
+    border: none;
+  }
+
+  /* ============================================
+     DATE/TIME INPUT
+     ============================================ */
+
+  /* Hide the native calendar icon and stretch picker trigger across input */
+  .date-input::-webkit-calendar-picker-indicator {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .date-input::-webkit-datetime-edit {
+    font-family: var(--font-display);
+    padding-right: 1.5rem;
+  }
+
+  .date-input::-webkit-datetime-edit-fields-wrapper {
+    padding: 0;
+  }
+
+  /* Style the inner text parts */
+  .date-input::-webkit-datetime-edit-text,
+  .date-input::-webkit-datetime-edit-month-field,
+  .date-input::-webkit-datetime-edit-day-field,
+  .date-input::-webkit-datetime-edit-year-field,
+  .date-input::-webkit-datetime-edit-hour-field,
+  .date-input::-webkit-datetime-edit-minute-field,
+  .date-input::-webkit-datetime-edit-ampm-field {
+    color: var(--color-text-primary);
+  }
+
+  /* Placeholder style when no value */
+  .date-input:invalid::-webkit-datetime-edit {
+    color: var(--color-text-tertiary);
+  }
+}
