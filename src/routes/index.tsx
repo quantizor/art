@@ -27,7 +27,9 @@ function Home() {
         </nav>
       </header>
 
-      <SpeedDial projects={projects} />
+      <div className="mt-16">
+        <SpeedDial projects={projects} />
+      </div>
     </main>
   )
 }

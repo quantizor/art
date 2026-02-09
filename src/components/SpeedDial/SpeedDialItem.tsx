@@ -32,7 +32,7 @@ export function SpeedDialItem({ project }: SpeedDialItemProps) {
     <Link to={route} className="block group focus:outline-none aspect-square">
       <Card
         interactive
-        className="h-full focus-within:border-[var(--color-border-accent)] relative"
+        className="h-full relative !bg-transparent !p-0"
       >
         {/* Background */}
         <div className="absolute inset-0 bg-[var(--color-surface-elevated)] overflow-hidden">
@@ -53,8 +53,8 @@ export function SpeedDialItem({ project }: SpeedDialItemProps) {
         </div>
 
         {/* Status badge overlay */}
-        <div className="absolute top-3 right-3 z-10">
-          <Badge variant={statusColors[status]} size="sm" className="notch-sm">
+        <div className="absolute top-2 right-3 z-10">
+          <Badge variant={statusColors[status]} size="sm" className="notch-xs">
             {statusLabels[status]}
           </Badge>
         </div>

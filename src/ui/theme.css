@@ -139,11 +139,13 @@
        ============================================ */
 
     /* Notch sizes for clipped corners */
+    --notch-xs: 4px;
     --notch-sm: 8px;
     --notch-md: 12px;
     --notch-lg: 16px;
 
     /* Clip paths for top-right corner notch */
+    --clip-notch-xs: polygon(0 0, calc(100% - var(--notch-xs)) 0, 100% var(--notch-xs), 100% 100%, 0 100%);
     --clip-notch-sm: polygon(0 0, calc(100% - var(--notch-sm)) 0, 100% var(--notch-sm), 100% 100%, 0 100%);
     --clip-notch-md: polygon(0 0, calc(100% - var(--notch-md)) 0, 100% var(--notch-md), 100% 100%, 0 100%);
     --clip-notch-lg: polygon(0 0, calc(100% - var(--notch-lg)) 0, 100% var(--notch-lg), 100% 100%, 0 100%);
@@ -210,6 +212,10 @@
   /* Corner notch utilities */
   .clip-path-none {
     clip-path: none;
+  }
+
+  .notch-xs {
+    clip-path: var(--clip-notch-xs);
   }
 
   .notch-sm {

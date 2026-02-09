@@ -100,6 +100,118 @@ describe('fetchPost', () => {
 })
 ```
 
+### 4.1 Games and Features Testing
+
+**All games and interactive features MUST be tested.** Each subsystem should be verifiable independently, without requiring the full environment (Three.js scene, React components, etc.).
+
+#### Testing Guidelines for Games
+
+1. **Isolate subsystems** - Game logic (physics, collision, AI) should be testable without rendering
+2. **Pure functions preferred** - Movement calculations, collision detection, and state transitions should be pure
+3. **Mock external dependencies** - Three.js objects, DOM, and React context should be mocked when testing logic
+4. **Use `bun test`** - All tests run with Bun's built-in test runner
+
+#### Example: Testing Game Subsystems
+
+```tsx
+// GridSystem.test.ts - Tests movement logic without Three.js
+import { describe, test, expect } from 'bun:test'
+import { GridSystem } from './GridSystem'
+
+describe('GridSystem', () => {
+  const grid = new GridSystem()
+
+  test('moves north (negative z)', () => {
+    const result = grid.moveForward({ x: 0, z: 0 }, 'north', 5)
+    expect(result.z).toBe(-5)
+  })
+
+  test('calculates angle-based movement', () => {
+    const result = grid.moveForwardAngle({ x: 0, z: 0 }, Math.PI / 2, 5)
+    expect(result.x).toBeCloseTo(5, 5)
+  })
+})
+```
+
+```tsx
+// CollisionSystem.test.ts - Tests collision without rendering
+import { describe, test, expect } from 'bun:test'
+import { CollisionSystem } from './CollisionSystem'
+
+describe('CollisionSystem', () => {
+  const collision = new CollisionSystem()
+
+  test('detects wall collision at boundary', () => {
+    expect(collision.checkWallCollision({ x: 64, z: 0 })).toBe(true)
+  })
+
+  test('no collision at center', () => {
+    expect(collision.checkWallCollision({ x: 0, z: 0 })).toBe(false)
+  })
+})
+```
+
+#### What to Test
+
+| System | Test Cases |
+|--------|------------|
+| Movement/Grid | Direction calculations, boundary clamping, angle conversions |
+| Collision | Wall detection, trail intersection, cycle-to-cycle collision |
+| AI | Decision making, obstacle avoidance, path finding |
+| State | Reducer actions, state transitions, score tracking |
+| Physics | Velocity, gravity, jump arcs, interpolation |
+
+#### Test File Organization
+
+```
+src/games/lightcycle/
+├── engine/
+│   ├── GridSystem.ts
+│   ├── GridSystem.test.ts       # Co-located tests
+│   ├── CollisionSystem.ts
+│   ├── CollisionSystem.test.ts
+│   └── AIController.test.ts
+├── state/
+│   └── GameContext.test.ts
+```
+
+Run tests: `bun test src/games/`
+
+### 5. GPU Shaders
+
+**Always use TypeGPU** for all GPU/shader work. Never use raw WebGPU APIs directly.
+
+- Use `tgpu.init()` for device initialization
+- Use `d.struct()` for uniform/storage buffer schemas
+- Use `root.createBuffer()` with `.$usage()` for typed buffers
+- Use `root.unwrap()` when interfacing with raw WebGPU APIs
+- Clean up with `root.destroy()` in useEffect cleanup
+
+```tsx
+import tgpu from 'typegpu'
+import * as d from 'typegpu/data'
+
+const Uniforms = d.struct({
+  time: d.f32,
+  resolution: d.vec2f,
+})
+
+const root = await tgpu.init()
+const uniformBuffer = root.createBuffer(Uniforms).$usage('uniform')
+
+// Write with type safety
+uniformBuffer.write({
+  time: 1.0,
+  resolution: d.vec2f(800, 600),
+})
+
+// Interface with raw WebGPU when needed
+const gpuBuffer = root.unwrap(uniformBuffer)
+
+// Cleanup
+root.destroy()
+```
+
 ---
 
 ## Overview
