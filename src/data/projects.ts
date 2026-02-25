@@ -11,6 +11,17 @@ import type { ArtProject, ProjectCategory, ProjectStatus } from '~/types/project
  */
 export const projects: ArtProject[] = [
   {
+    id: 'crystal-growth',
+    title: 'Crystal Growth',
+    description: 'Real-time testosterone crystal simulation using DLA under polarized light.',
+    route: '/projects/crystal-growth',
+    status: 'wip',
+    category: 'generative',
+    tags: ['threejs', 'simulation', 'dla'],
+    date: '2026-02-24',
+    featured: true,
+  },
+  {
     id: 'particle-flow',
     title: 'Particle Flow',
     description: 'GPU-accelerated particle system with fluid dynamics.',

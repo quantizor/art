@@ -20,6 +20,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as UsersIndexRouteImport } from './routes/users.index'
 import { Route as PostsIndexRouteImport } from './routes/posts.index'
 import { Route as UsersUserIdRouteImport } from './routes/users.$userId'
+import { Route as ProjectsCrystalGrowthRouteImport } from './routes/projects.crystal-growth'
 import { Route as PostsPostIdRouteImport } from './routes/posts.$postId'
 import { Route as ApiUsersRouteImport } from './routes/api/users'
 import { Route as PathlessLayoutNestedLayoutRouteImport } from './routes/_pathlessLayout/_nested-layout'
@@ -82,6 +83,11 @@ const UsersUserIdRoute = UsersUserIdRouteImport.update({
   path: '/$userId',
   getParentRoute: () => UsersRoute,
 } as any)
+const ProjectsCrystalGrowthRoute = ProjectsCrystalGrowthRouteImport.update({
+  id: '/projects/crystal-growth',
+  path: '/projects/crystal-growth',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PostsPostIdRoute = PostsPostIdRouteImport.update({
   id: '/$postId',
   path: '/$postId',
@@ -130,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/users': typeof UsersRouteWithChildren
   '/api/users': typeof ApiUsersRouteWithChildren
   '/posts/$postId': typeof PostsPostIdRoute
+  '/projects/crystal-growth': typeof ProjectsCrystalGrowthRoute
   '/users/$userId': typeof UsersUserIdRoute
   '/posts/': typeof PostsIndexRoute
   '/users/': typeof UsersIndexRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/ui': typeof UiRoute
   '/api/users': typeof ApiUsersRouteWithChildren
   '/posts/$postId': typeof PostsPostIdRoute
+  '/projects/crystal-growth': typeof ProjectsCrystalGrowthRoute
   '/users/$userId': typeof UsersUserIdRoute
   '/posts': typeof PostsIndexRoute
   '/users': typeof UsersIndexRoute
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/_pathlessLayout/_nested-layout': typeof PathlessLayoutNestedLayoutRouteWithChildren
   '/api/users': typeof ApiUsersRouteWithChildren
   '/posts/$postId': typeof PostsPostIdRoute
+  '/projects/crystal-growth': typeof ProjectsCrystalGrowthRoute
   '/users/$userId': typeof UsersUserIdRoute
   '/posts/': typeof PostsIndexRoute
   '/users/': typeof UsersIndexRoute
@@ -187,6 +196,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/api/users'
     | '/posts/$postId'
+    | '/projects/crystal-growth'
     | '/users/$userId'
     | '/posts/'
     | '/users/'
@@ -203,6 +213,7 @@ export interface FileRouteTypes {
     | '/ui'
     | '/api/users'
     | '/posts/$postId'
+    | '/projects/crystal-growth'
     | '/users/$userId'
     | '/posts'
     | '/users'
@@ -223,6 +234,7 @@ export interface FileRouteTypes {
     | '/_pathlessLayout/_nested-layout'
     | '/api/users'
     | '/posts/$postId'
+    | '/projects/crystal-growth'
     | '/users/$userId'
     | '/posts/'
     | '/users/'
@@ -242,6 +254,7 @@ export interface RootRouteChildren {
   UiRoute: typeof UiRoute
   UsersRoute: typeof UsersRouteWithChildren
   ApiUsersRoute: typeof ApiUsersRouteWithChildren
+  ProjectsCrystalGrowthRoute: typeof ProjectsCrystalGrowthRoute
   PostsPostIdDeepRoute: typeof PostsPostIdDeepRoute
 }
 
@@ -323,6 +336,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/users/$userId'
       preLoaderRoute: typeof UsersUserIdRouteImport
       parentRoute: typeof UsersRoute
+    }
+    '/projects/crystal-growth': {
+      id: '/projects/crystal-growth'
+      path: '/projects/crystal-growth'
+      fullPath: '/projects/crystal-growth'
+      preLoaderRoute: typeof ProjectsCrystalGrowthRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/posts/$postId': {
       id: '/posts/$postId'
@@ -452,6 +472,7 @@ const rootRouteChildren: RootRouteChildren = {
   UiRoute: UiRoute,
   UsersRoute: UsersRouteWithChildren,
   ApiUsersRoute: ApiUsersRouteWithChildren,
+  ProjectsCrystalGrowthRoute: ProjectsCrystalGrowthRoute,
   PostsPostIdDeepRoute: PostsPostIdDeepRoute,
 }
 export const routeTree = rootRouteImport
