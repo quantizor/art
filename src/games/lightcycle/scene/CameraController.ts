@@ -147,6 +147,9 @@ export class CameraController {
   ): void {
     const config = CAMERA_CONFIG.firstPerson
 
+    // Reset up vector (may have been rotated by topDown mode)
+    this.camera.up.set(0, 1, 0)
+
     // Camera sits at cycle position, slightly elevated
     this.targetPosition.set(
       position.x,
@@ -171,6 +174,9 @@ export class CameraController {
     rotation: number
   ): void {
     const config = CAMERA_CONFIG.thirdPerson
+
+    // Reset up vector (may have been rotated by topDown mode)
+    this.camera.up.set(0, 1, 0)
 
     // Camera behind and above the cycle
     this.targetPosition.set(

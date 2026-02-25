@@ -2,9 +2,11 @@
  * Collision System
  *
  * Detects collisions between cycles, trails, and arena walls.
+ * Supports height-aware collision for jump mechanics and
+ * trail expiry for time-limited trails.
  */
 
-import { ARENA_HALF, TRAIL_WIDTH } from '../constants'
+import { ARENA_HALF, TRAIL_WIDTH, TRAIL_HEIGHT, TRAIL_LIFETIME, TRAIL_FADE_DURATION } from '../constants'
 import type { CollisionResult, CycleState, GridPosition, TrailSegment } from '../types'
 
 /** Collision detection radius around cycle center */
@@ -17,7 +19,8 @@ export class CollisionSystem {
   checkCollision(
     position: GridPosition,
     cycleId: string,
-    allCycles: CycleState[]
+    allCycles: CycleState[],
+    yOffset: number = 0
   ): CollisionResult {
     // Check wall collision first (cheapest)
     if (this.checkWallCollision(position)) {
@@ -31,7 +34,8 @@ export class CollisionSystem {
       const trailResult = this.checkTrailCollision(
         position,
         cycle.trail,
-        cycleId === cycle.id
+        cycleId === cycle.id,
+        yOffset
       )
 
       if (trailResult) {
@@ -67,20 +71,27 @@ export class CollisionSystem {
   }
 
   /**
-   * Check collision with trail segments
+   * Check collision with trail segments (height-aware, expiry-aware)
    */
   checkTrailCollision(
     position: GridPosition,
     trail: TrailSegment[],
-    isSelf: boolean
+    isSelf: boolean,
+    racerY: number = 0
   ): boolean {
     // For self-collision, skip the last few segments (can't hit your own recent trail)
     const segmentsToCheck = isSelf
       ? trail.slice(0, Math.max(0, trail.length - 2))
       : trail
 
+    const now = performance.now()
+    const maxAge = TRAIL_LIFETIME + TRAIL_FADE_DURATION
+
     for (const segment of segmentsToCheck) {
-      if (this.pointIntersectsSegment(position, segment)) {
+      // Skip expired segments
+      if (segment.timestamp && (now - segment.timestamp) > maxAge) continue
+
+      if (this.pointIntersectsSegment(position, segment, racerY)) {
         return true
       }
     }
@@ -89,27 +100,39 @@ export class CollisionSystem {
   }
 
   /**
-   * Check if a point intersects a trail segment
+   * Check if a point intersects a trail segment (with Y overlap)
    */
   private pointIntersectsSegment(
     point: GridPosition,
-    segment: TrailSegment
+    segment: TrailSegment,
+    racerY: number = 0
   ): boolean {
     const { start, end } = segment
     const halfWidth = TRAIL_WIDTH / 2 + CYCLE_RADIUS
 
-    // Calculate segment bounds
+    // Calculate segment bounds in XZ
     const minX = Math.min(start.x, end.x) - halfWidth
     const maxX = Math.max(start.x, end.x) + halfWidth
     const minZ = Math.min(start.z, end.z) - halfWidth
     const maxZ = Math.max(start.z, end.z) + halfWidth
 
-    return (
-      point.x >= minX &&
-      point.x <= maxX &&
-      point.z >= minZ &&
-      point.z <= maxZ
-    )
+    if (point.x < minX || point.x > maxX || point.z < minZ || point.z > maxZ) {
+      return false
+    }
+
+    // Y overlap check
+    const segStartY = segment.startY ?? 0
+    const segEndY = segment.endY ?? 0
+    const segMinY = Math.min(segStartY, segEndY)
+    const segMaxY = Math.max(segStartY, segEndY) + TRAIL_HEIGHT
+    const racerMinY = racerY
+    const racerMaxY = racerY + TRAIL_HEIGHT
+
+    if (racerMinY > segMaxY || racerMaxY < segMinY) {
+      return false
+    }
+
+    return true
   }
 
   /**
@@ -139,6 +162,9 @@ export class CollisionSystem {
     let minHitDistance = Infinity
     let hitType: 'wall' | 'trail' | 'cycle' | null = null
 
+    const now = performance.now()
+    const maxAge = TRAIL_LIFETIME + TRAIL_FADE_DURATION
+
     // Check wall intersection
     const wallDist = this.raycastWall(position, direction)
     if (wallDist < minHitDistance) {
@@ -164,7 +190,10 @@ export class CollisionSystem {
             : cycle.trail
 
         for (const segment of trail) {
-          if (this.pointIntersectsSegment(testPos, segment)) {
+          // Skip expired segments
+          if (segment.timestamp && (now - segment.timestamp) > maxAge) continue
+
+          if (this.pointIntersectsSegment(testPos, segment, 0)) {
             if (d < minHitDistance) {
               minHitDistance = d
               hitType = 'trail'

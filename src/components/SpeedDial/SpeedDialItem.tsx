@@ -29,18 +29,18 @@ export function SpeedDialItem({ project }: SpeedDialItemProps) {
   const { title, description, thumbnail, route, status, category, date } = project;
 
   return (
-    <Link to={route} className="block group focus:outline-none aspect-square">
+    <Link to={route} className="block group focus:outline-none">
       <Card
         interactive
-        className="h-full relative !bg-transparent !p-0"
+        className="relative !bg-transparent !p-0"
       >
-        {/* Background */}
-        <div className="absolute inset-0 bg-[var(--color-surface-elevated)] overflow-hidden">
+        {/* Background — in flow so card has intrinsic height */}
+        <div className="relative w-full aspect-square bg-[var(--color-surface-elevated)] overflow-hidden">
           {thumbnail ? (
             <img
               src={thumbnail}
               alt={`${title} preview`}
-              className="w-full h-full object-cover transition-transform duration-150 ease-out group-hover:scale-105"
+              className="absolute inset-0 w-full h-full object-cover transition-transform duration-150 ease-out group-hover:scale-105"
               loading="lazy"
             />
           ) : (

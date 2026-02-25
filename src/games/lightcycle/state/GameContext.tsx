@@ -14,12 +14,14 @@ import {
 } from 'react'
 import {
   CYCLE_COLORS,
+  DEFAULT_AI_PERSONALITIES,
   generateSpawnPositions,
   TURN_LEFT,
   TURN_RIGHT,
   DIRECTION_TO_ANGLE,
   normalizeAngle,
 } from '../constants'
+import { getDefaultProfile } from '../engine/AIController'
 import type {
   CameraMode,
   CycleState,
@@ -55,6 +57,8 @@ type GameAction =
   | { type: 'START_JUMP'; cycleId: string; time: number }
   | { type: 'END_JUMP'; cycleId: string }
   | { type: 'TAKE_CONTROL' }
+  | { type: 'TOGGLE_MODEL' }
+  | { type: 'PRUNE_EXPIRED_TRAILS'; maxAge: number }
 
 // ============================================
 // INITIAL STATE FACTORY
@@ -81,6 +85,10 @@ function createInitialCycles(): CycleState[] {
     isJumping: false,
     jumpStartTime: 0,
     lastJumpTime: 0,
+    // AI cycles get distinct personality profiles; player has none
+    aiProfile: index === 0
+      ? undefined
+      : getDefaultProfile('medium', DEFAULT_AI_PERSONALITIES[index - 1]),
   }))
 }
 
@@ -99,6 +107,7 @@ function createInitialState(): GameState {
       'ai-3': 0,
     },
     isNPCMode: true, // Start in NPC/demo mode until user takes control
+    useFallbackModel: true,
   }
 }
 
@@ -350,6 +359,22 @@ function gameReducer(state: GameState, action: GameAction): GameState {
     case 'TAKE_CONTROL':
       return { ...state, isNPCMode: false }
 
+    case 'TOGGLE_MODEL':
+      return { ...state, useFallbackModel: !state.useFallbackModel }
+
+    case 'PRUNE_EXPIRED_TRAILS': {
+      const now = performance.now()
+      return {
+        ...state,
+        cycles: state.cycles.map((cycle) => ({
+          ...cycle,
+          trail: cycle.trail.filter(
+            (seg) => (now - seg.timestamp) < action.maxAge
+          ),
+        })),
+      }
+    }
+
     default:
       return state
   }
@@ -463,6 +488,8 @@ export const GameActions = {
   }),
   endJump: (cycleId: string): GameAction => ({ type: 'END_JUMP', cycleId }),
   takeControl: (): GameAction => ({ type: 'TAKE_CONTROL' }),
+  toggleModel: (): GameAction => ({ type: 'TOGGLE_MODEL' }),
+  pruneExpiredTrails: (maxAge: number): GameAction => ({ type: 'PRUNE_EXPIRED_TRAILS', maxAge }),
 }
 
 export type { GameAction }

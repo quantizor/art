@@ -36,6 +36,12 @@ export interface TrailSegment {
   start: GridPosition
   end: GridPosition
   direction: GridDirection
+  /** Y position at segment start (for height-aware collision) */
+  startY: number
+  /** Y position at segment end (for height-aware collision) */
+  endY: number
+  /** Timestamp when this segment was created (for expiry) */
+  timestamp: number
 }
 
 /**
@@ -63,6 +69,8 @@ export interface CycleState {
   isJumping: boolean
   jumpStartTime: number
   lastJumpTime: number
+  /** AI configuration profile (undefined for human player) */
+  aiProfile?: AIProfile
 }
 
 /**
@@ -78,6 +86,8 @@ export interface GameState {
   scores: Record<string, number> // id -> score
   /** Whether player is AI-controlled (NPC demo mode) */
   isNPCMode: boolean
+  /** Whether to use the fallback geometry model instead of GLB */
+  useFallbackModel: boolean
 }
 
 /**
@@ -116,7 +126,7 @@ export type GameStore = GameState & GameActions
 /**
  * Input action types
  */
-export type InputAction = 'turnLeft' | 'turnRight' | 'jump' | 'toggleCamera' | 'pause' | 'confirm'
+export type InputAction = 'turnLeft' | 'turnRight' | 'jump' | 'toggleCamera' | 'toggleModel' | 'pause' | 'confirm'
 
 /**
  * Keyboard mapping
@@ -142,6 +152,117 @@ export interface AIState {
   cycleId: string
   nextTurnTime: number
   dangerLevel: number
+}
+
+// ============================================
+// AI PROFILE TYPES
+// ============================================
+
+/**
+ * AI difficulty tiers
+ */
+export type AIDifficulty = 'easy' | 'medium' | 'hard'
+
+/**
+ * AI personality archetypes that drive behavioral variety
+ */
+export type AIPersonality = 'aggressive' | 'defensive' | 'trapper' | 'erratic'
+
+/**
+ * Per-difficulty tuning parameters.
+ * These multiply or override the base AI_CONFIG values.
+ */
+export interface AIDifficultyProfile {
+  /** Multiplier on lookAheadDistance (0.6 = shorter vision, 1.5 = further) */
+  lookAheadMultiplier: number
+  /** Multiplier on the base decision interval (higher = slower reactions) */
+  decisionIntervalMultiplier: number
+  /** Probability [0-1] of making a random suboptimal move */
+  mistakeRate: number
+  /** How many escape paths the AI projects forward (1-3 levels deep) */
+  planningDepth: number
+  /** Whether this difficulty considers opponent positions */
+  considersOpponents: boolean
+  /** Probability [0-1] of correctly evaluating a jump opportunity */
+  jumpAccuracy: number
+}
+
+/**
+ * Personality-specific scoring weight multipliers.
+ * Each field multiplies the base weight for that scoring factor.
+ */
+export interface AIPersonalityWeights {
+  /** Weight multiplier for forward distance scoring */
+  forwardDistanceWeight: number
+  /** Weight multiplier for escape path scoring */
+  escapePathWeight: number
+  /** Weight multiplier for self-trail danger scoring */
+  selfTrailDangerWeight: number
+  /** Weight multiplier for opponent proximity (positive = drawn to, negative = avoids) */
+  opponentProximityWeight: number
+  /** Weight multiplier for center-of-arena preference */
+  centerPreferenceWeight: number
+  /** Multiplier on minTurnDistance threshold (higher = turns earlier) */
+  proactiveTurnThreshold: number
+  /** Multiplier on jump probability when opportunity arises */
+  jumpEagerness: number
+}
+
+/**
+ * Full AI profile combining difficulty and personality.
+ * Assigned to each AI cycle at spawn time.
+ */
+export interface AIProfile {
+  difficulty: AIDifficulty
+  personality: AIPersonality
+  difficultyParams: AIDifficultyProfile
+  personalityWeights: AIPersonalityWeights
+}
+
+// ============================================
+// AI STRATEGY TYPES
+// ============================================
+
+/**
+ * Named strategies the AI can execute
+ */
+export type AIStrategyName = 'headOn' | 'cutOff' | 'box' | 'wallRide' | 'survive'
+
+/**
+ * Per-cycle strategy state tracked across frames.
+ * AI-private — NOT part of CycleState (which is game state).
+ */
+export interface AIStrategyState {
+  /** Current active strategy */
+  activeStrategy: AIStrategyName
+  /** ID of the targeted opponent (null for survive/wallRide) */
+  targetId: string | null
+  /** Physics time when this strategy was adopted */
+  strategyStartTime: number
+  /** Consecutive decision ticks this strategy has been active */
+  persistenceTicks: number
+  /** Physics time of last decision evaluation */
+  lastEvalTime: number
+  /** Decision counter (for deterministic mistake cadence) */
+  decisionCount: number
+  /** Last turn time (for turn cooldown enforcement) */
+  lastTurnTime: number
+}
+
+/**
+ * Per-personality strategy preference weights.
+ * Higher weight = more likely to be selected when conditions allow.
+ */
+export interface AIStrategyPreferences {
+  headOnPreference: number
+  cutOffPreference: number
+  boxPreference: number
+  wallRidePreference: number
+  survivePreference: number
+  /** Min ticks before strategy can be reconsidered */
+  minPersistence: number
+  /** Max ticks before strategy is forcibly reconsidered */
+  maxPersistence: number
 }
 
 /**

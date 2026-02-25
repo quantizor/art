@@ -4,7 +4,16 @@
  * Configuration values for gameplay, rendering, and physics.
  */
 
-import type { CameraMode, GridDirection, KeyMapping } from './types'
+import type {
+  AIDifficulty,
+  AIDifficultyProfile,
+  AIPersonality,
+  AIPersonalityWeights,
+  AIStrategyPreferences,
+  CameraMode,
+  GridDirection,
+  KeyMapping,
+} from './types'
 
 // ============================================
 // ARENA CONFIGURATION
@@ -35,11 +44,20 @@ export const AI_COUNT = 3
 /** Total number of cycles (1 player + AI) */
 export const TOTAL_CYCLES = 1 + AI_COUNT
 
-/** Height of light trail walls */
-export const TRAIL_HEIGHT = 2
+/** Height of light trail walls (matches racer model visual height) */
+export const TRAIL_HEIGHT = 0.8
 
 /** Width of light trail walls */
-export const TRAIL_WIDTH = 0.15
+export const TRAIL_WIDTH = 0.4
+
+/** Trail lifetime in ms before fade begins */
+export const TRAIL_LIFETIME = 5000
+
+/** Duration of trail fade-out in ms (smooth gradient disappearance) */
+export const TRAIL_FADE_DURATION = 2000
+
+/** Ground-level Y for trail bottom when not jumping */
+export const TRAIL_BASE_Y = 0
 
 // ============================================
 // COLORS (TRON-style palette)
@@ -115,16 +133,21 @@ const BASE_SPAWN_CONFIGS: Array<{
   { position: { x: ARENA_HALF - 10, z: 0 }, direction: 'west' },
 ]
 
-/** Generate randomized spawn positions with some variance */
+/** Generate spawn positions: player always gets slot 0 (south, facing north),
+ *  AI slots are shuffled with positional variance */
 export function generateSpawnPositions(): Array<{
   position: { x: number; z: number }
   direction: GridDirection
 }> {
-  // Shuffle the base positions
-  const shuffled = [...BASE_SPAWN_CONFIGS].sort(() => Math.random() - 0.5)
+  // Player always spawns south, facing north (index 0 is stable)
+  const playerSpawn = BASE_SPAWN_CONFIGS[0]
+  // Shuffle only the AI spawn slots
+  const aiSpawns = BASE_SPAWN_CONFIGS.slice(1).sort(() => Math.random() - 0.5)
+
+  const allSpawns = [playerSpawn, ...aiSpawns]
 
   // Add some randomness to positions (within ±20 units along the edge)
-  return shuffled.map((spawn) => {
+  return allSpawns.map((spawn) => {
     const variance = (Math.random() - 0.5) * 40
 
     // Add variance perpendicular to facing direction
@@ -164,6 +187,7 @@ export const KEY_MAPPINGS: KeyMapping[] = [
   { key: 'KeyW', action: 'jump' },
   { key: 'ArrowUp', action: 'jump' },
   { key: 'KeyV', action: 'toggleCamera' },
+  { key: 'KeyM', action: 'toggleModel' },
   { key: 'Escape', action: 'pause' },
   { key: 'Space', action: 'confirm' },
   { key: 'Enter', action: 'confirm' },
@@ -176,12 +200,136 @@ export const KEY_MAPPINGS: KeyMapping[] = [
 export const AI_CONFIG = {
   /** How far ahead AI looks for obstacles */
   lookAheadDistance: 25,
-  /** Minimum distance before AI considers turning */
-  minTurnDistance: 4,
+  /** Minimum distance before AI considers turning (low = dramatic last-second turns) */
+  minTurnDistance: 2.5,
   /** Randomness factor (0-1) for AI decisions */
   randomFactor: 0.15,
   /** How often AI recalculates (ms) */
   decisionInterval: 60,
+} as const
+
+// ============================================
+// AI DIFFICULTY PROFILES
+// ============================================
+
+export const AI_DIFFICULTY_PROFILES: Record<AIDifficulty, AIDifficultyProfile> = {
+  easy: {
+    lookAheadMultiplier: 0.6,
+    decisionIntervalMultiplier: 2.0,
+    mistakeRate: 0.25,
+    planningDepth: 1,
+    considersOpponents: false,
+    jumpAccuracy: 0.3,
+  },
+  medium: {
+    lookAheadMultiplier: 1.0,
+    decisionIntervalMultiplier: 1.0,
+    mistakeRate: 0.08,
+    planningDepth: 2,
+    considersOpponents: false,
+    jumpAccuracy: 0.6,
+  },
+  hard: {
+    lookAheadMultiplier: 1.5,
+    decisionIntervalMultiplier: 0.7,
+    mistakeRate: 0.02,
+    planningDepth: 3,
+    considersOpponents: true,
+    jumpAccuracy: 0.9,
+  },
+} as const
+
+// ============================================
+// AI PERSONALITY WEIGHTS
+// ============================================
+
+export const AI_PERSONALITY_WEIGHTS: Record<AIPersonality, AIPersonalityWeights> = {
+  aggressive: {
+    forwardDistanceWeight: 1.5,
+    escapePathWeight: 0.6,
+    selfTrailDangerWeight: 0.8,
+    opponentProximityWeight: 2.5,
+    centerPreferenceWeight: 0.3,
+    proactiveTurnThreshold: 0.7,
+    jumpEagerness: 1.8,
+  },
+  defensive: {
+    forwardDistanceWeight: 2.0,
+    escapePathWeight: 2.0,
+    selfTrailDangerWeight: 1.5,
+    opponentProximityWeight: -1.0,
+    centerPreferenceWeight: 1.5,
+    proactiveTurnThreshold: 1.5,
+    jumpEagerness: 0.5,
+  },
+  trapper: {
+    forwardDistanceWeight: 1.2,
+    escapePathWeight: 1.5,
+    selfTrailDangerWeight: 1.2,
+    opponentProximityWeight: 1.5,
+    centerPreferenceWeight: 0.8,
+    proactiveTurnThreshold: 1.2,
+    jumpEagerness: 0.3,
+  },
+  erratic: {
+    forwardDistanceWeight: 1.0,
+    escapePathWeight: 1.0,
+    selfTrailDangerWeight: 0.5,
+    opponentProximityWeight: 0.5,
+    centerPreferenceWeight: 0.2,
+    proactiveTurnThreshold: 0.8,
+    jumpEagerness: 2.0,
+  },
+} as const
+
+/** Default personality assignments for the 3 AI cycles */
+export const DEFAULT_AI_PERSONALITIES: readonly AIPersonality[] = [
+  'aggressive',
+  'defensive',
+  'trapper',
+] as const
+
+// ============================================
+// AI STRATEGY PREFERENCES
+// ============================================
+
+export const AI_STRATEGY_PREFERENCES: Record<AIPersonality, AIStrategyPreferences> = {
+  aggressive: {
+    headOnPreference: 3.0,
+    cutOffPreference: 2.0,
+    boxPreference: 0.5,
+    wallRidePreference: 0.3,
+    survivePreference: 0.5,
+    minPersistence: 15,
+    maxPersistence: 90,
+  },
+  defensive: {
+    headOnPreference: 0.3,
+    cutOffPreference: 0.5,
+    boxPreference: 0.8,
+    wallRidePreference: 3.0,
+    survivePreference: 2.5,
+    minPersistence: 30,
+    maxPersistence: 120,
+  },
+  trapper: {
+    headOnPreference: 0.5,
+    cutOffPreference: 3.0,
+    boxPreference: 3.0,
+    wallRidePreference: 1.0,
+    survivePreference: 0.8,
+    minPersistence: 20,
+    maxPersistence: 100,
+  },
+  erratic: {
+    headOnPreference: 2.0,
+    cutOffPreference: 1.5,
+    boxPreference: 1.0,
+    wallRidePreference: 0.5,
+    survivePreference: 1.0,
+    minPersistence: 5,
+    maxPersistence: 30,
+  },
 } as const
 
 // ============================================

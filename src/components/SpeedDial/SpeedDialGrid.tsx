@@ -23,7 +23,6 @@ export function SpeedDialGrid({ children }: SpeedDialGridProps) {
         'sm:grid-cols-2',
         'lg:grid-cols-3',
         'xl:grid-cols-4',
-        'max-w-sm', // Constrain card size
       ].join(' ')}
     >
       {children}

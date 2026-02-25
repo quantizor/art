@@ -14,6 +14,9 @@ import {
   JUMP_DURATION,
   MAX_DELTA,
   PHYSICS_TIMESTEP,
+  TRAIL_BASE_Y,
+  TRAIL_LIFETIME,
+  TRAIL_FADE_DURATION,
   TURN_SPEED,
   TURN_THRESHOLD,
   normalizeAngle,
@@ -35,6 +38,8 @@ interface CycleObjects {
   renderPosition: { x: number; z: number }
   /** Last turn position for trail segments */
   lastTurnPosition: { x: number; z: number }
+  /** Y position at last turn (for trail segment Y data) */
+  lastTurnY: number
   /** Whether this cycle's trail has started */
   trailStarted: boolean
   /** The angle at which the current segment was started (for consistent trail direction) */
@@ -61,6 +66,7 @@ export class GameLoop {
 
   private countdownTimer: number = 0
   private autoRestartScheduled: boolean = false
+  private trailPruneTimer: number = 0
 
   private canvas: HTMLCanvasElement
 
@@ -132,10 +138,7 @@ export class GameLoop {
       this.sceneManager.scene.add(trail.group)
 
       // Start trail immediately from spawn position (behind the cycle)
-      const initialAttachPoint = {
-        x: cycle.gridPosition.x - Math.sin(cycle.angle) * 1.0,
-        z: cycle.gridPosition.z + Math.cos(cycle.angle) * 1.0,
-      }
+      const initialAttachPoint = this.getTrailAttachPoint(cycle.gridPosition, cycle.angle, 0)
       trail.startNewSegment(initialAttachPoint)
       trail.group.visible = true
 
@@ -143,7 +146,8 @@ export class GameLoop {
         model,
         trail,
         renderPosition: { ...cycle.gridPosition },
-        lastTurnPosition: { ...initialAttachPoint },
+        lastTurnPosition: { x: initialAttachPoint.x, z: initialAttachPoint.z },
+        lastTurnY: TRAIL_BASE_Y,
         trailStarted: true,
         segmentAngle: cycle.angle,
       })
@@ -296,6 +300,8 @@ export class GameLoop {
    * Fixed timestep physics update
    */
   private physicsUpdate(dt: number, state: GameState, currentTime: number): void {
+    // Build augmented cycles with live trail segments for collision detection
+    const cyclesWithLiveTrails = this.getCyclesWithLiveTrails(state.cycles)
     const aliveCycles = state.cycles.filter((c) => c.isAlive)
 
     for (const cycle of aliveCycles) {
@@ -324,10 +330,11 @@ export class GameLoop {
       }
 
       // AI decision (also controls player in NPC mode)
+      // Use augmented cycles so AI sees live trail segments too
       if (!cycle.isPlayer || state.isNPCMode) {
         const decision = this.aiController.getDecision(
           cycle,
-          state.cycles,
+          cyclesWithLiveTrails,
           this.physicsTime
         )
 
@@ -349,34 +356,37 @@ export class GameLoop {
         movement
       )
 
-      // Only check collision if not jumping
-      const isInAir = cycle.isJumping && LightcycleModel.calculateJumpY(cycle.jumpStartTime, currentTime) > 0.5
+      // Calculate jump Y offset
+      let yOffset = 0
+      if (cycle.isJumping) {
+        yOffset = LightcycleModel.calculateJumpY(cycle.jumpStartTime, currentTime)
+      }
 
-      if (!isInAir) {
-        const collision = this.collisionSystem.checkCollision(
-          newPosition,
-          cycle.id,
-          state.cycles
-        )
+      // Always check collision using augmented trails (includes live segments)
+      const collision = this.collisionSystem.checkCollision(
+        newPosition,
+        cycle.id,
+        cyclesWithLiveTrails,
+        yOffset
+      )
 
-        if (collision.collided) {
-          // Cycle dies
-          this.dispatch(GameActions.killCycle(cycle.id))
+      if (collision.collided) {
+        // Cycle dies
+        this.dispatch(GameActions.killCycle(cycle.id))
 
-          // Death explosion effect
-          const cycleObj = this.cycleObjects.get(cycle.id)
-          if (cycleObj) {
-            cycleObj.model.explode(this.sceneManager.scene, () => {
-              // Explosion complete
-            })
+        // Death explosion effect
+        const cycleObj = this.cycleObjects.get(cycle.id)
+        if (cycleObj) {
+          cycleObj.model.explode(this.sceneManager.scene, () => {
+            // Explosion complete
+          })
 
-            // If player died, switch to top-down spectator view
-            if (cycle.isPlayer) {
-              this.dispatch(GameActions.setCamera('topDown'))
-            }
+          // If player died, switch to top-down spectator view
+          if (cycle.isPlayer) {
+            this.dispatch(GameActions.setCamera('topDown'))
           }
-          continue
         }
+        continue
       }
 
       // Update position
@@ -387,35 +397,76 @@ export class GameLoop {
       if (cycleObj) {
         cycleObj.renderPosition = { ...newPosition }
 
-        // Extend trail from back of cycle
-        // During a turn, use the TARGET angle so the trail extends straight
-        // (not the interpolating angle which would cause curving)
+        // Extend trail from back of cycle (Y-aware, follows jumps)
+        // Use the interpolating angle so the trail stays attached to the
+        // model's actual back during smooth turns (creates a rounded corner)
         if (cycleObj.trailStarted) {
-          const trailAngle = cycle.isTurning && cycle.targetAngle !== -1
-            ? cycle.targetAngle
-            : cycle.angle
-          const attachPoint = this.getTrailAttachPoint(newPosition, trailAngle)
+          const attachPoint = this.getTrailAttachPoint(newPosition, cycle.angle, yOffset)
           cycleObj.trail.extendLastSegment(attachPoint)
         }
       }
     }
+
+    // Periodically prune expired trail segments from state
+    this.trailPruneTimer += dt
+    if (this.trailPruneTimer > 2000) {
+      this.trailPruneTimer = 0
+      this.dispatch(GameActions.pruneExpiredTrails(TRAIL_LIFETIME + TRAIL_FADE_DURATION))
+    }
   }
 
   /**
-   * Get trail attachment point (back of cycle)
+   * Build augmented cycle states that include the "live" segment
+   * (from last turn corner to current position) which isn't in state.trail.
+   * This is critical for collision: without it, racers can drive through
+   * the active segment of another racer's trail.
    */
-  private getTrailAttachPoint(position: { x: number; z: number }, angle: number): { x: number; z: number } {
+  private getCyclesWithLiveTrails(stateCycles: CycleState[]): CycleState[] {
+    return stateCycles.map((cycle) => {
+      if (!cycle.isAlive) return cycle
+
+      const cycleObj = this.cycleObjects.get(cycle.id)
+      if (!cycleObj || !cycleObj.trailStarted) return cycle
+
+      // Build the live segment: from lastTurnPosition to current trail attach point
+      const currentAttach = this.getTrailAttachPoint(cycle.gridPosition, cycle.angle)
+
+      const liveSegment: TrailSegment = {
+        start: { ...cycleObj.lastTurnPosition },
+        end: { x: currentAttach.x, z: currentAttach.z },
+        direction: cycle.direction,
+        startY: cycleObj.lastTurnY,
+        endY: currentAttach.y,
+        timestamp: performance.now(),
+      }
+
+      return {
+        ...cycle,
+        trail: [...cycle.trail, liveSegment],
+      }
+    })
+  }
+
+  /**
+   * Get trail attachment point (back of cycle, Y-aware)
+   */
+  private getTrailAttachPoint(
+    position: { x: number; z: number },
+    angle: number,
+    yOffset: number = 0
+  ): { x: number; y: number; z: number } {
     // Offset behind the cycle (negative forward direction)
     const offset = 1.0 // Distance behind center
     return {
       x: position.x - Math.sin(angle) * offset,
+      y: TRAIL_BASE_Y + yOffset,
       z: position.z + Math.cos(angle) * offset,
     }
   }
 
   /**
    * Handle cycle turn (initiates smooth curved turn)
-   * With the new spline-based trail, we just need to add a corner point
+   * Adds a corner point and records the trail segment with Y data
    */
   private handleTurn(cycleId: string, direction: 'left' | 'right', state: GameState): void {
     const cycle = state.cycles.find((c) => c.id === cycleId)
@@ -424,20 +475,30 @@ export class GameLoop {
     const cycleObj = this.cycleObjects.get(cycleId)
     if (!cycleObj) return
 
+    // Compute current Y offset for trail attachment
+    let yOffset = 0
+    if (cycle.isJumping) {
+      yOffset = LightcycleModel.calculateJumpY(cycle.jumpStartTime, performance.now())
+    }
+
     // Get current trail position and add it as a corner point
-    const cornerPoint = this.getTrailAttachPoint(cycle.gridPosition, cycle.angle)
+    const cornerPoint = this.getTrailAttachPoint(cycle.gridPosition, cycle.angle, yOffset)
 
     // Add corner point to trail (forces a control point at this position)
     cycleObj.trail.extendLastSegment(cornerPoint)
 
-    // Record for state tracking
+    // Record for state tracking (with Y data and timestamp)
     const segment: TrailSegment = {
       start: { ...cycleObj.lastTurnPosition },
-      end: { ...cornerPoint },
+      end: { x: cornerPoint.x, z: cornerPoint.z },
       direction: cycle.direction,
+      startY: cycleObj.lastTurnY,
+      endY: cornerPoint.y,
+      timestamp: performance.now(),
     }
     this.dispatch(GameActions.addTrailSegment(cycleId, segment))
-    cycleObj.lastTurnPosition = { ...cornerPoint }
+    cycleObj.lastTurnPosition = { x: cornerPoint.x, z: cornerPoint.z }
+    cycleObj.lastTurnY = cornerPoint.y
 
     // Calculate the NEW segment's angle
     const turnAmount = direction === 'left' ? -Math.PI / 2 : Math.PI / 2
@@ -478,6 +539,7 @@ export class GameLoop {
       // Update model transform with continuous angle
       cycleObj.model.setTransform(cycleObj.renderPosition, cycle.angle, yOffset)
       cycleObj.model.setVisible(cycle.isAlive)
+      cycleObj.model.setFallbackMode(state.useFallbackModel)
     }
   }
 
@@ -489,7 +551,7 @@ export class GameLoop {
     const currentTime = performance.now()
 
     // Take control from NPC mode on first player input
-    if (state.isNPCMode && (action === 'turnLeft' || action === 'turnRight' || action === 'jump')) {
+    if (state.isNPCMode && (action === 'turnLeft' || action === 'turnRight' || action === 'jump' || action === 'confirm')) {
       this.dispatch(GameActions.takeControl())
     }
 
@@ -516,6 +578,10 @@ export class GameLoop {
         this.dispatch(GameActions.toggleCamera())
         break
 
+      case 'toggleModel':
+        this.dispatch(GameActions.toggleModel())
+        break
+
       case 'pause':
         if (state.phase === 'playing') {
           this.dispatch(GameActions.pauseGame())
@@ -525,7 +591,10 @@ export class GameLoop {
         break
 
       case 'confirm':
-        if (state.phase === 'menu') {
+        if (state.phase === 'playing') {
+          // Space/Enter also triggers jump during gameplay
+          this.handleJump('player', currentTime)
+        } else if (state.phase === 'menu') {
           this.dispatch(GameActions.startGame())
         } else if (state.phase === 'gameOver') {
           this.dispatch(GameActions.restartGame())

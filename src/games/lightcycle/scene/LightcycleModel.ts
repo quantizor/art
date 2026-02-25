@@ -26,9 +26,14 @@ interface ExplosionParticle {
 
 export class LightcycleModel {
   group: THREE.Group
+  private fallbackGroup: THREE.Group
+  private glbGroup: THREE.Group | null = null
+  private fallbackAccentMaterials: THREE.MeshStandardMaterial[] = []
+  private glbAccentMaterials: THREE.MeshStandardMaterial[] = []
   private accentMaterials: THREE.MeshStandardMaterial[] = []
   private color: number
   private modelLoaded = false
+  private _useFallback = true
   private baseY = 0
   private explosionParticles: ExplosionParticle[] = []
   private explosionGroup: THREE.Group | null = null
@@ -37,6 +42,8 @@ export class LightcycleModel {
   constructor(color: number) {
     this.color = color
     this.group = new THREE.Group()
+    this.fallbackGroup = new THREE.Group()
+    this.group.add(this.fallbackGroup)
 
     // Create fallback geometry immediately
     this.createFallbackModel()
@@ -53,10 +60,8 @@ export class LightcycleModel {
       const gltf = await loader.loadAsync(url)
       console.log('[LightcycleModel] GLB loaded successfully')
 
-      // Clear fallback
-      this.disposeFallback()
-
-      // Add loaded model
+      // Store GLB in its own group (keep fallback for toggling)
+      this.glbGroup = new THREE.Group()
       const model = gltf.scene
 
       // Log model structure for debugging
@@ -82,7 +87,7 @@ export class LightcycleModel {
                 console.log('[LightcycleModel] Applying accent to:', mat.name || child.name)
                 mat.emissive = new THREE.Color(this.color)
                 mat.emissiveIntensity = 1.5
-                this.accentMaterials.push(mat)
+                this.glbAccentMaterials.push(mat)
               } else {
                 // Piano black for body
                 mat.color = new THREE.Color(0x1a1a1a)
@@ -107,8 +112,19 @@ export class LightcycleModel {
       model.position.z = -center.z
       model.position.y = 0
 
-      this.group.add(model)
+      this.glbGroup.add(model)
+      this.group.add(this.glbGroup)
       this.modelLoaded = true
+
+      // Switch to GLB by default when loaded, unless fallback is forced
+      if (!this._useFallback) {
+        this.fallbackGroup.visible = false
+        this.glbGroup.visible = true
+        this.accentMaterials = this.glbAccentMaterials
+      } else {
+        this.glbGroup.visible = false
+      }
+
       console.log('[LightcycleModel] Model setup complete')
     } catch (error) {
       console.warn('[LightcycleModel] Failed to load GLB:', error)
@@ -117,80 +133,268 @@ export class LightcycleModel {
   }
 
   /**
-   * Create simple geometric fallback (looks like a TRON cycle)
+   * Create detailed sci-fi motorcycle fallback model
    */
   private createFallbackModel(): void {
-    // Body - elongated box with glossy piano black finish
-    const bodyGeometry = new THREE.BoxGeometry(0.6, 0.4, 2)
-    const bodyMaterial = new THREE.MeshStandardMaterial({
+    // --- Material palette ---
+    const bodyMat = new THREE.MeshStandardMaterial({
       color: 0x1a1a1a,
       roughness: 0.2,
       metalness: 0.9,
     })
-    const body = new THREE.Mesh(bodyGeometry, bodyMaterial)
-    body.position.y = 0.5
-
-    // Front wheel arc (visual only)
-    const wheelFrontGeometry = new THREE.CylinderGeometry(0.4, 0.4, 0.1, 16)
-    const wheelMaterial = new THREE.MeshStandardMaterial({
-      color: 0x1a1a1a,
-      roughness: 0.25,
-      metalness: 0.9,
+    const tireMat = new THREE.MeshStandardMaterial({
+      color: 0x111111,
+      roughness: 0.4,
+      metalness: 0.7,
     })
-    const wheelFront = new THREE.Mesh(wheelFrontGeometry, wheelMaterial)
-    wheelFront.rotation.z = Math.PI / 2
-    wheelFront.position.set(0, 0.4, -0.8)
+    const hubMat = new THREE.MeshStandardMaterial({
+      color: 0x222222,
+      roughness: 0.15,
+      metalness: 0.95,
+    })
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: 0x2a2a2a,
+      roughness: 0.3,
+      metalness: 0.85,
+    })
+    const seatMat = new THREE.MeshStandardMaterial({
+      color: 0x0a0a0a,
+      roughness: 0.6,
+      metalness: 0.3,
+    })
 
-    // Rear wheel
-    const wheelRear = new THREE.Mesh(wheelFrontGeometry, wheelMaterial)
-    wheelRear.rotation.z = Math.PI / 2
-    wheelRear.position.set(0, 0.4, 0.8)
+    const makeAccent = (): THREE.MeshStandardMaterial => {
+      const mat = new THREE.MeshStandardMaterial({
+        color: this.color,
+        emissive: this.color,
+        emissiveIntensity: 1.5,
+        roughness: 0.2,
+        metalness: 0.5,
+      })
+      this.fallbackAccentMaterials.push(mat)
+      return mat
+    }
 
-    // Accent strip (glowing line on top)
-    const accentGeometry = new THREE.BoxGeometry(0.1, 0.15, 1.8)
-    const accentMaterial = new THREE.MeshStandardMaterial({
+    // --- Wheels (front & rear) ---
+    const tireGeo = new THREE.TorusGeometry(0.3, 0.08, 12, 24)
+    const hubGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.06, 8)
+    const rimGeo = new THREE.TorusGeometry(0.22, 0.015, 8, 24)
+
+    const createWheel = (z: number): THREE.Group => {
+      const wheelGroup = new THREE.Group()
+
+      const tire = new THREE.Mesh(tireGeo, tireMat)
+      tire.rotation.x = Math.PI / 2
+      wheelGroup.add(tire)
+
+      const hub = new THREE.Mesh(hubGeo, hubMat)
+      // Hub cylinder axis along Y by default, rotate so it faces sideways
+      hub.rotation.x = Math.PI / 2
+      wheelGroup.add(hub)
+
+      const rim = new THREE.Mesh(rimGeo, makeAccent())
+      rim.rotation.x = Math.PI / 2
+      wheelGroup.add(rim)
+
+      wheelGroup.position.set(0, 0.3, z)
+      return wheelGroup
+    }
+
+    const frontWheel = createWheel(-0.75)
+    const rearWheel = createWheel(0.75)
+
+    // --- Frame / Chassis ---
+    const hullGeo = new THREE.BoxGeometry(0.5, 0.25, 1.4)
+    const hull = new THREE.Mesh(hullGeo, bodyMat)
+    hull.position.set(0, 0.55, 0)
+
+    const frontCowlGeo = new THREE.BoxGeometry(0.35, 0.2, 0.4)
+    const frontCowl = new THREE.Mesh(frontCowlGeo, bodyMat)
+    frontCowl.position.set(0, 0.55, -0.85)
+    frontCowl.rotation.x = -0.12 // Slight forward tilt
+
+    const rearCowlGeo = new THREE.BoxGeometry(0.45, 0.2, 0.3)
+    const rearCowl = new THREE.Mesh(rearCowlGeo, bodyMat)
+    rearCowl.position.set(0, 0.52, 0.7)
+    rearCowl.rotation.x = 0.15 // Slope down toward rear
+
+    // --- Front Fork Assembly ---
+    const forkGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 6)
+    const forkAngle = 0.26 // ~15 degrees forward lean
+
+    const forkLeft = new THREE.Mesh(forkGeo, frameMat)
+    forkLeft.position.set(-0.08, 0.42, -0.62)
+    forkLeft.rotation.x = forkAngle
+
+    const forkRight = new THREE.Mesh(forkGeo, frameMat)
+    forkRight.position.set(0.08, 0.42, -0.62)
+    forkRight.rotation.x = forkAngle
+
+    // --- Engine Block (sides) ---
+    const engineGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.25, 8)
+    const engineGlowGeo = new THREE.TorusGeometry(0.08, 0.012, 8, 16)
+
+    const engineLeft = new THREE.Mesh(engineGeo, frameMat)
+    engineLeft.rotation.z = Math.PI / 2
+    engineLeft.position.set(-0.3, 0.4, 0.2)
+
+    const engineRight = new THREE.Mesh(engineGeo, frameMat)
+    engineRight.rotation.z = Math.PI / 2
+    engineRight.position.set(0.3, 0.4, 0.2)
+
+    // Engine glow rings
+    const engineGlowLeft = new THREE.Mesh(engineGlowGeo, makeAccent())
+    engineGlowLeft.rotation.y = Math.PI / 2
+    engineGlowLeft.position.set(-0.3, 0.4, 0.2)
+
+    const engineGlowRight = new THREE.Mesh(engineGlowGeo, makeAccent())
+    engineGlowRight.rotation.y = Math.PI / 2
+    engineGlowRight.position.set(0.3, 0.4, 0.2)
+
+    // --- Exhaust Pipes ---
+    const exhaustGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.6, 6)
+    const exhaustTipGeo = new THREE.CylinderGeometry(0.03, 0.025, 0.06, 6)
+
+    const exhaustLeft = new THREE.Mesh(exhaustGeo, frameMat)
+    exhaustLeft.rotation.x = Math.PI / 2
+    exhaustLeft.position.set(-0.28, 0.35, 0.6)
+
+    const exhaustRight = new THREE.Mesh(exhaustGeo, frameMat)
+    exhaustRight.rotation.x = Math.PI / 2
+    exhaustRight.position.set(0.28, 0.35, 0.6)
+
+    // Glowing exhaust tips
+    const exhaustTipLeft = new THREE.Mesh(exhaustTipGeo, makeAccent())
+    exhaustTipLeft.rotation.x = Math.PI / 2
+    exhaustTipLeft.position.set(-0.28, 0.35, 0.9)
+
+    const exhaustTipRight = new THREE.Mesh(exhaustTipGeo, makeAccent())
+    exhaustTipRight.rotation.x = Math.PI / 2
+    exhaustTipRight.position.set(0.28, 0.35, 0.9)
+
+    // --- Windshield ---
+    const windshieldGeo = new THREE.PlaneGeometry(0.3, 0.25)
+    const windshieldMat = new THREE.MeshStandardMaterial({
       color: this.color,
       emissive: this.color,
-      emissiveIntensity: 1.5,
-      roughness: 0.2,
-      metalness: 0.5,
+      emissiveIntensity: 0.3,
+      roughness: 0.1,
+      metalness: 0.2,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide,
     })
-    const accent = new THREE.Mesh(accentGeometry, accentMaterial)
-    accent.position.y = 0.75
-    this.accentMaterials.push(accentMaterial)
+    this.fallbackAccentMaterials.push(windshieldMat)
+    const windshield = new THREE.Mesh(windshieldGeo, windshieldMat)
+    windshield.position.set(0, 0.72, -0.6)
+    windshield.rotation.x = -0.52 // ~30 degrees backward tilt
 
-    // Side accents
-    const sideAccentGeometry = new THREE.BoxGeometry(0.05, 0.1, 1.6)
-    const sideLeft = new THREE.Mesh(sideAccentGeometry, accentMaterial.clone())
-    sideLeft.position.set(-0.32, 0.5, 0)
-    this.accentMaterials.push(sideLeft.material as THREE.MeshStandardMaterial)
+    // --- Seat ---
+    const seatGeo = new THREE.BoxGeometry(0.3, 0.06, 0.5)
+    const seat = new THREE.Mesh(seatGeo, seatMat)
+    seat.position.set(0, 0.72, 0.1)
 
-    const sideRight = new THREE.Mesh(sideAccentGeometry, accentMaterial.clone())
-    sideRight.position.set(0.32, 0.5, 0)
-    this.accentMaterials.push(sideRight.material as THREE.MeshStandardMaterial)
+    // --- Handlebar ---
+    const handlebarGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.35, 6)
+    const handlebar = new THREE.Mesh(handlebarGeo, frameMat)
+    handlebar.rotation.z = Math.PI / 2
+    handlebar.position.set(0, 0.7, -0.55)
 
-    // Front light
-    const frontLightGeometry = new THREE.BoxGeometry(0.4, 0.1, 0.05)
-    const frontLight = new THREE.Mesh(frontLightGeometry, accentMaterial.clone())
-    frontLight.position.set(0, 0.5, -1.02)
-    this.accentMaterials.push(frontLight.material as THREE.MeshStandardMaterial)
+    // Grips
+    const gripGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.06, 6)
+    const gripLeft = new THREE.Mesh(gripGeo, seatMat)
+    gripLeft.rotation.z = Math.PI / 2
+    gripLeft.position.set(-0.19, 0.7, -0.55)
 
-    this.group.add(body, wheelFront, wheelRear, accent, sideLeft, sideRight, frontLight)
+    const gripRight = new THREE.Mesh(gripGeo, seatMat)
+    gripRight.rotation.z = Math.PI / 2
+    gripRight.position.set(0.19, 0.7, -0.55)
+
+    // --- Accent Lighting ---
+    // Headlight
+    const headlightGeo = new THREE.BoxGeometry(0.25, 0.06, 0.02)
+    const headlight = new THREE.Mesh(headlightGeo, makeAccent())
+    headlight.position.set(0, 0.55, -1.0)
+
+    // Tail light
+    const taillightGeo = new THREE.BoxGeometry(0.3, 0.04, 0.02)
+    const taillight = new THREE.Mesh(taillightGeo, makeAccent())
+    taillight.position.set(0, 0.52, 0.95)
+
+    // Top spine
+    const spineGeo = new THREE.BoxGeometry(0.06, 0.08, 1.2)
+    const spine = new THREE.Mesh(spineGeo, makeAccent())
+    spine.position.set(0, 0.72, 0)
+
+    // Side runners
+    const sideRunnerGeo = new THREE.BoxGeometry(0.02, 0.06, 1.0)
+    const sideRunnerLeft = new THREE.Mesh(sideRunnerGeo, makeAccent())
+    sideRunnerLeft.position.set(-0.26, 0.5, 0)
+
+    const sideRunnerRight = new THREE.Mesh(sideRunnerGeo, makeAccent())
+    sideRunnerRight.position.set(0.26, 0.5, 0)
+
+    // --- Add all parts to fallback group ---
+    this.fallbackGroup.add(
+      // Wheels
+      frontWheel,
+      rearWheel,
+      // Chassis
+      hull,
+      frontCowl,
+      rearCowl,
+      // Fork
+      forkLeft,
+      forkRight,
+      // Engine
+      engineLeft,
+      engineRight,
+      engineGlowLeft,
+      engineGlowRight,
+      // Exhaust
+      exhaustLeft,
+      exhaustRight,
+      exhaustTipLeft,
+      exhaustTipRight,
+      // Windshield
+      windshield,
+      // Seat
+      seat,
+      // Handlebar
+      handlebar,
+      gripLeft,
+      gripRight,
+      // Accent lighting
+      headlight,
+      taillight,
+      spine,
+      sideRunnerLeft,
+      sideRunnerRight,
+    )
+
+    // Fallback is the active model initially
+    this.accentMaterials = this.fallbackAccentMaterials
   }
 
-  private disposeFallback(): void {
-    this.group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose()
-        if (Array.isArray(child.material)) {
-          child.material.forEach((m) => m.dispose())
-        } else {
-          child.material.dispose()
-        }
-      }
-    })
-    this.group.clear()
-    this.accentMaterials = []
+  /**
+   * Toggle between fallback geometry and GLB model
+   */
+  setFallbackMode(useFallback: boolean): void {
+    this._useFallback = useFallback
+
+    if (useFallback) {
+      this.fallbackGroup.visible = true
+      if (this.glbGroup) this.glbGroup.visible = false
+      this.accentMaterials = this.fallbackAccentMaterials
+    } else if (this.glbGroup) {
+      this.fallbackGroup.visible = false
+      this.glbGroup.visible = true
+      this.accentMaterials = this.glbAccentMaterials
+    }
+    // If no GLB loaded, keep fallback visible regardless
+
+    // Re-apply current color to new active materials
+    this.setColor(this.color)
   }
 
   /**
@@ -198,7 +402,9 @@ export class LightcycleModel {
    */
   setTransform(position: { x: number; z: number }, angle: number, yOffset: number = 0): void {
     this.group.position.set(position.x, this.baseY + yOffset, position.z)
-    this.group.rotation.y = angle
+    // Negate angle: movement uses clockwise-from-above convention (sin(θ), -cos(θ))
+    // but Three.js rotation.y is counterclockwise (right-hand rule), so we invert
+    this.group.rotation.y = -angle
   }
 
   /**
@@ -379,5 +585,7 @@ export class LightcycleModel {
       }
     })
     this.accentMaterials = []
+    this.fallbackAccentMaterials = []
+    this.glbAccentMaterials = []
   }
 }

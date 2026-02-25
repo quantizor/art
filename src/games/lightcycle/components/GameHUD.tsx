@@ -5,7 +5,8 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { useGameState } from '../state/GameContext'
+import { useGame } from '../state/GameContext'
+import { GameActions } from '../state/GameContext'
 
 function getCycleName(id: string): string {
   if (id === 'player') return 'PLAYER'
@@ -13,7 +14,7 @@ function getCycleName(id: string): string {
 }
 
 export function GameHUD() {
-  const state = useGameState()
+  const { state, dispatch } = useGame()
   const aliveCycles = state.cycles.filter((c) => c.isAlive)
   const [eliminationMessage, setEliminationMessage] = useState<string | null>(null)
   const [winnerMessage, setWinnerMessage] = useState<string | null>(null)
@@ -106,11 +107,20 @@ export function GameHUD() {
 
       {/* Bottom left - Controls */}
       <div className="absolute bottom-4 left-4">
-        <div className="bg-black/60 p-3 text-xs space-y-1">
+        <div className="bg-black/60 p-3 text-xs space-y-2">
           <div className="flex gap-4 text-[var(--color-text-secondary)]">
             <span><kbd className="text-[var(--color-primary)]">A/D</kbd> turn</span>
             <span><kbd className="text-[var(--color-primary)]">W</kbd> jump</span>
             <span><kbd className="text-[var(--color-primary)]">V</kbd> camera</span>
+            <span><kbd className="text-[var(--color-primary)]">M</kbd> model</span>
+          </div>
+          <div>
+            <button
+              className="pointer-events-auto px-2 py-1 bg-black/80 border border-[var(--color-primary)]/40 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors uppercase tracking-wide cursor-pointer"
+              onClick={() => dispatch(GameActions.toggleModel())}
+            >
+              {state.useFallbackModel ? 'Fallback Model' : 'GLB Model'}
+            </button>
           </div>
         </div>
       </div>
