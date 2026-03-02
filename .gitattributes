@@ -1,0 +1,2 @@
+# Treat built output as binary — no diffs, no merge conflicts
+docs/** binary

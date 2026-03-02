@@ -5,7 +5,8 @@ import {
   Scripts,
   createRootRoute,
 } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
+// Router devtools disabled — re-enable with:
+// import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import * as React from 'react'
 import { DefaultCatchBoundary } from '~/components/DefaultCatchBoundary'
 import { NotFound } from '~/components/NotFound'
@@ -27,7 +28,7 @@ export const Route = createRootRoute({
         content: '#000000',
       },
       ...seo({
-        title: 'Art Portfolio',
+        title: "quantizor's studio",
         description: 'Interactive art experiments and creative coding projects.',
       }),
     ],
@@ -81,7 +82,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body className="min-h-screen">
         <Outlet />
-        <TanStackRouterDevtools position="bottom-right" />
+        {/* <TanStackRouterDevtools position="bottom-right" /> */}
         <Scripts />
       </body>
     </html>
