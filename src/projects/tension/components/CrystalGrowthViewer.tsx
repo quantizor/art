@@ -427,27 +427,6 @@ export function CrystalGrowthViewer() {
     setColorParams(randomParamsFromProfile(profile, colorRng))
   }, [])
 
-  /** Handle user manually entering a seed string */
-  const handleSeedChange = useCallback((newSeedStr: string) => {
-    setSeedString(newSeedStr)
-    const profile = getProfile(crystalType)
-    const masterSeed = decodeSeed(newSeedStr)
-
-    const simRng = forkDomain(masterSeed, DOMAIN.SIM_PARAMS)
-    const colorRng = forkDomain(masterSeed, DOMAIN.COLOR_PARAMS)
-    const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
-    const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
-
-    setActiveProfile(profile, strategyRng, bandRng)
-    simRef.current?.setProfile(profile)
-    setSimParams(prev => ({
-      ...prev,
-      ...randomSimParamsFromProfile(profile, simRng),
-      facets: 0,
-    }))
-    setColorParams(randomParamsFromProfile(profile, colorRng))
-  }, [crystalType])
-
   const handleSave = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -476,8 +455,6 @@ export function CrystalGrowthViewer() {
           onReset={handleReset}
           onSave={handleSave}
           onRandomize={handleRandomize}
-          seedString={seedString}
-          onSeedChange={handleSeedChange}
         />
       }
     >

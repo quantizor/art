@@ -5,14 +5,13 @@
  * Slides into the top of the screen when collapsed.
  */
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { Badge } from '~/ui/Badge'
 import { Button } from '~/ui/Button'
 import { Slider } from '~/ui/Slider'
 import { Select } from '~/ui/Select'
 import { MAX_SEED_COUNT } from '../constants'
 import { getAvailableTypes } from '../profiles'
-import { decodeSeed, randomSeedString } from '../engine/SeededRandom'
 import type { CrystalType, SimulationParams, ColorParams, SimulationPhase, GrowthPattern } from '../types'
 
 interface ControlPanelProps {
@@ -27,8 +26,6 @@ interface ControlPanelProps {
   onReset: () => void
   onSave: () => void
   onRandomize: () => void
-  seedString: string
-  onSeedChange: (seed: string) => void
 }
 
 export function ControlPanel({
@@ -43,18 +40,8 @@ export function ControlPanel({
   onReset,
   onSave,
   onRandomize,
-  seedString,
-  onSeedChange,
 }: ControlPanelProps) {
   const [collapsed, setCollapsed] = useState(true)
-  const [localSeed, setLocalSeed] = useState(seedString)
-  const [copied, setCopied] = useState(false)
-  const seedInputRef = useRef<HTMLInputElement>(null)
-
-  // Sync local seed when parent changes it (e.g. on randomize)
-  if (localSeed !== seedString && document.activeElement !== seedInputRef.current) {
-    setLocalSeed(seedString)
-  }
 
   const phaseBadgeVariant =
     phase === 'growing' ? 'primary' : phase === 'paused' ? 'warning' : phase === 'complete' ? 'info' : 'default'
@@ -107,50 +94,6 @@ export function ControlPanel({
             <span className="text-xs text-white/50 font-mono">
               {particleCount.toLocaleString()}
             </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <input
-              ref={seedInputRef}
-              type="text"
-              value={localSeed}
-              maxLength={8}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => {
-                const v = e.target.value.toLowerCase().replace(/[^0-9a-z]/g, '').slice(0, 8)
-                setLocalSeed(v)
-              }}
-              onBlur={() => {
-                // Validate and apply seed
-                const decoded = decodeSeed(localSeed)
-                if (localSeed.length === 0 || decoded === 0) {
-                  // Invalid — generate a new random seed
-                  const fallback = randomSeedString()
-                  setLocalSeed(fallback)
-                  onSeedChange(fallback)
-                } else {
-                  onSeedChange(localSeed)
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.currentTarget.blur()
-                }
-              }}
-              className="w-[4.2rem] bg-transparent border border-white/20 px-1.5 py-0.5 text-[10px] font-mono text-white/70 focus:text-white focus:border-white/50 outline-none tracking-wider"
-              title="Seed — paste a seed to reproduce a design"
-            />
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                navigator.clipboard.writeText(seedString)
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1200)
-              }}
-              className="text-[10px] text-white/40 hover:text-white/70 font-mono cursor-pointer"
-              title="Copy seed"
-            >
-              {copied ? 'ok' : 'cp'}
-            </button>
           </div>
           <span
             className="text-[10px] text-white hover:text-white/70 uppercase tracking-widest font-mono"
