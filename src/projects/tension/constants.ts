@@ -22,14 +22,22 @@ export const GRID_SCALE = DPR
 // GRID CONFIGURATION
 // ============================================
 
-/** Base grid size (before DPI scaling) */
+/** Base grid width (before DPI scaling) */
 export const BASE_GRID_SIZE = 1024
+
+/** Letterbox bar height: 2 × h-20 (5rem = 80px at default 16px base) */
+const LETTERBOX_TOTAL_PX = 160
+
+/** Visible canvas aspect ratio (screen minus letterbox bars) */
+const screenW = typeof window !== 'undefined' ? window.innerWidth : 1920
+const screenH = typeof window !== 'undefined' ? Math.max(window.innerHeight - LETTERBOX_TOTAL_PX, 400) : 920
+const CANVAS_ASPECT = screenW / screenH
 
 /** Grid width in cells (DPI-scaled) */
 export const GRID_WIDTH = Math.round(BASE_GRID_SIZE * GRID_SCALE)
 
-/** Grid height in cells (DPI-scaled) */
-export const GRID_HEIGHT = Math.round(BASE_GRID_SIZE * GRID_SCALE)
+/** Grid height in cells — matches visible canvas aspect so no pixels are wasted behind letterbox */
+export const GRID_HEIGHT = Math.round(GRID_WIDTH / CANVAS_ASPECT)
 
 /** World-to-grid resolution (cells per world unit) */
 export const RESOLUTION = 1
@@ -45,7 +53,7 @@ export const MAX_PARTICLES = GRID_WIDTH * GRID_HEIGHT
 export const DEFAULT_WALKER_COUNT = 2048
 
 /** Maximum seed count for slider range */
-export const MAX_SEED_COUNT = 80
+export const MAX_SEED_COUNT = 48
 
 /** Minimum distance between seeds (Poisson disk) — scaled with DPI */
 export const SEED_MIN_DISTANCE = Math.round(50 * GRID_SCALE)
@@ -55,21 +63,23 @@ export const DEFAULT_SIM_PARAMS: SimulationParams = {
   stepsPerFrame: 7200,
   biasStrength: 0,
   axisCount: 3,
-  seedCount: 40,
+  seedCount: 12,
   stepSize: 1.0,
   walkerCount: DEFAULT_WALKER_COUNT,
   killRadiusMultiplier: 2.5,
   facets: 0,
+  aspectRatio: 1.15,
 }
 
-/** Default color parameters */
+/** Default color parameters — neon vivid agate */
 export const DEFAULT_COLOR_PARAMS: ColorParams = {
-  mode: 'oilslick',
-  bandWavelength: 24,
-  bandAmplitude: 0.15,
-  baseLightness: 0.58,
-  saturation: 0.72,
-  monoHue: 200,
+  mode: 'agate',
+  growthPattern: 'radial',
+  bandWavelength: 14,
+  bandAmplitude: 0.35,
+  baseLightness: 0.55,
+  saturation: 1.0,
+  monoHue: 25,
 }
 
 // ============================================
@@ -78,12 +88,6 @@ export const DEFAULT_COLOR_PARAMS: ColorParams = {
 
 /** Background color (near-black with slight blue tint) */
 export const BACKGROUND_COLOR = 0x050508
-
-/** Vignette configuration */
-export const VIGNETTE_CONFIG = {
-  darkness: 0.7,
-  offset: 1.2,
-} as const
 
 // ============================================
 // CAMERA

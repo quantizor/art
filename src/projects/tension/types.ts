@@ -5,7 +5,62 @@
  */
 
 /** Color mode for crystal rendering */
-export type ColorMode = 'birefringence' | 'rainbow' | 'monochrome' | 'oilslick' | 'polarized' | 'dichroism' | 'laue' | 'conoscopic'
+export type ColorMode = 'agate'
+
+/** Crystal type — each type has a distinct profile of growth parameters */
+export type CrystalType = 'agate' | 'tourmaline'
+
+/** Crystal profile — pure data record defining all tunable parameters for a crystal type */
+export interface CrystalProfile {
+  type: CrystalType
+  name: string
+
+  // Growth shape (FloodFillSimulation)
+  growthNoiseScale: number
+  growthOctaves: number
+  growthH: number
+  growthWarpStrength: number
+  maxGrainArea: number
+
+  // Band structure (ColorMapper)
+  growthPattern: GrowthPattern
+  bandNoiseScale: number
+  bandOctaves: number
+  bandH: number
+  bandWarpStrength: number
+  bandCenterFadeMultiplier: number
+  bandRampBands: number
+  bandRampStart: number
+  bandRampExponent: number
+  bandWidthVariation: [number, number]
+  bandRhythmStrength: number
+  bandRhythmFrequency: number
+  bandThinFrequency: number
+  bandThinWidth: number
+
+  // Color strategy
+  colorStrategyName: string
+  colorVibrancyRange: [number, number]
+  colorUniformityRange: [number, number]
+  colorBoundaryFrequency: number
+  colorFamilySwitchRate: number
+
+  // Optical effects (ColorMapper)
+  tiltRange: number
+  tiltBrightness: [number, number]
+  tiltRetention: [number, number]
+  sheen: number
+  strainEnabled: boolean
+
+  // Randomization ranges (CrystalGrowthViewer)
+  bandWavelengthRange: [number, number]
+  bandAmplitudeRange: [number, number]
+  baseLightnessRange: [number, number]
+  saturationRange: [number, number]
+  seedCountRange: [number, number]
+  axisCountRange: [number, number]
+  aspectRatioRange: [number, number]
+}
 
 /** Simulation phase */
 export type SimulationPhase = 'idle' | 'growing' | 'paused' | 'complete'
@@ -42,12 +97,19 @@ export interface SimulationParams {
   killRadiusMultiplier: number
   /** Number of polygon sides for crystal shape (0 = circle, 3-12 = polygon) */
   facets: number
+  /** Aspect ratio for elliptical growth (1.0 = circle, >1.0 = elongated along primary axis) */
+  aspectRatio: number
 }
+
+/** Growth pattern — determines how color varies within each crystal */
+export type GrowthPattern = 'linear' | 'radial'
 
 /** Parameters for birefringence color mapping */
 export interface ColorParams {
   /** Color mode */
   mode: ColorMode
+  /** Growth pattern: 'linear' = gradient across grain, 'radial' = concentric from center */
+  growthPattern: GrowthPattern
   /** Band wavelength in grid units */
   bandWavelength: number
   /** Band amplitude (0-1) */

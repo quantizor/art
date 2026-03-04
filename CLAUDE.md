@@ -4,6 +4,10 @@
 
 When working on this codebase, follow these directives:
 
+### 0. Never Run Dev Server
+
+Never run `bun dev`, `bun start`, `bun run preview`, or any command that starts a long-running dev/preview server. The user runs the dev server themselves. Only use `npx tsc --noEmit` or `bun run build` for verification.
+
 ### 1. Planning Requirements
 
 When creating implementation plans, always include:

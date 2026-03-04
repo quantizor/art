@@ -5,8 +5,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import { useGame } from '../state/GameContext'
-import { GameActions } from '../state/GameContext'
+import { useGameState } from '../state/GameContext'
 
 function getCycleName(id: string): string {
   if (id === 'player') return 'PLAYER'
@@ -14,7 +13,7 @@ function getCycleName(id: string): string {
 }
 
 export function GameHUD() {
-  const { state, dispatch } = useGame()
+  const state = useGameState()
   const aliveCycles = state.cycles.filter((c) => c.isAlive)
   const [eliminationMessage, setEliminationMessage] = useState<string | null>(null)
   const [winnerMessage, setWinnerMessage] = useState<string | null>(null)
@@ -95,32 +94,23 @@ export function GameHUD() {
         </div>
       )}
 
-      {/* Demo mode indicator */}
+      {/* Auto mode indicator - positioned above the "Route not found" box */}
       {state.isNPCMode && state.phase !== 'gameOver' && (
-        <div className="absolute top-4 left-4">
-          <div className="bg-black/70 px-3 py-2 text-sm">
-            <span className="text-[var(--color-warning)] uppercase tracking-wide">DEMO MODE</span>
-            <span className="text-[var(--color-text-secondary)] ml-2">— Press A/D to play</span>
-          </div>
+        <div className="absolute bottom-[76px] left-0 right-0 flex justify-center">
+          <span className="text-[var(--color-warning)] text-xs font-bold uppercase tracking-widest">
+            Auto, take control any time
+          </span>
         </div>
       )}
 
       {/* Bottom left - Controls */}
       <div className="absolute bottom-4 left-4">
-        <div className="bg-black/60 p-3 text-xs space-y-2">
+        <div className="bg-black/60 p-3 text-xs">
           <div className="flex gap-4 text-[var(--color-text-secondary)]">
             <span><kbd className="text-[var(--color-primary)]">A/D</kbd> turn</span>
             <span><kbd className="text-[var(--color-primary)]">W</kbd> jump</span>
             <span><kbd className="text-[var(--color-primary)]">V</kbd> camera</span>
             <span><kbd className="text-[var(--color-primary)]">M</kbd> model</span>
-          </div>
-          <div>
-            <button
-              className="pointer-events-auto px-2 py-1 bg-black/80 border border-[var(--color-primary)]/40 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors uppercase tracking-wide cursor-pointer"
-              onClick={() => dispatch(GameActions.toggleModel())}
-            >
-              {state.useFallbackModel ? 'Fallback Model' : 'GLB Model'}
-            </button>
           </div>
         </div>
       </div>

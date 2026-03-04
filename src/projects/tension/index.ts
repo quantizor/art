@@ -1,5 +1,5 @@
 /**
- * Crystal Growth — Real-Time Testosterone Crystal Simulation
+ * Tension — Real-Time Crystal Growth Simulation
  *
  * Uses Diffusion-Limited Aggregation with directional bias
  * to simulate polarized light microscopy of crystal growth.

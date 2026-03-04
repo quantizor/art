@@ -8,7 +8,7 @@ export const Route = createFileRoute('/')({
 })
 
 function Home() {
-  const projects = getSortedProjects({ limit: 1 })
+  const projects = getSortedProjects()
 
   return (
     <main className="min-h-screen p-4 sm:p-6 lg:p-8">

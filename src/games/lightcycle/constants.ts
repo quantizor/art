@@ -36,7 +36,7 @@ export const CELL_SIZE = 1
 // ============================================
 
 /** Base speed in grid cells per second */
-export const BASE_SPEED = 12
+export const BASE_SPEED = 18
 
 /** Number of AI opponents */
 export const AI_COUNT = 3
@@ -360,7 +360,7 @@ export const JUMP_COOLDOWN = 800
 // ============================================
 
 /** Turn speed in radians per second */
-export const TURN_SPEED = 4.0
+export const TURN_SPEED = 6.0
 
 /** Minimum angle difference to consider turn complete */
 export const TURN_THRESHOLD = 0.01

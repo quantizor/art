@@ -34,7 +34,10 @@ export function ProjectShell({
 }: ProjectShellProps) {
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black touch-none">
-      {children}
+      {/* Canvas area inset from letterbox bars so grid matches visible area */}
+      <div className="absolute top-20 bottom-20 left-0 right-0">
+        {children}
+      </div>
 
       {/* Top letterbox border */}
       <div className="absolute top-0 left-0 right-0 h-20 bg-black z-10 pointer-events-none" />

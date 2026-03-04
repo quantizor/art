@@ -32,7 +32,7 @@ export function SpeedDialItem({ project }: SpeedDialItemProps) {
     <Link to={route} className="block group focus:outline-none">
       <Card
         interactive
-        className="relative !bg-transparent !p-0"
+        className="relative"
       >
         {/* Background — in flow so card has intrinsic height */}
         <div className="relative w-full aspect-square bg-[var(--color-surface-elevated)] overflow-hidden">
@@ -52,17 +52,19 @@ export function SpeedDialItem({ project }: SpeedDialItemProps) {
           )}
         </div>
 
-        {/* Status badge overlay */}
-        <div className="absolute top-2 right-3 z-10">
-          <Badge variant={statusColors[status]} size="sm" className="notch-xs">
-            {statusLabels[status]}
-          </Badge>
-        </div>
+        {/* Status badge overlay — hidden for active projects */}
+        {status !== 'active' && (
+          <div className="absolute top-2 right-3 z-10">
+            <Badge variant={statusColors[status]} size="sm" className="notch-xs">
+              {statusLabels[status]}
+            </Badge>
+          </div>
+        )}
 
         {/* Content overlay at bottom */}
-        <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 pt-8">
+        <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 pt-8 flex flex-col gap-1">
           <CardTitle>{title}</CardTitle>
-          <CardMeta>{description}</CardMeta>
+          <CardMeta className="mt-1">{description}</CardMeta>
           <span className="text-code text-[var(--color-text-tertiary)] text-xs mt-2 block">
             {formatDate(date)}
           </span>

@@ -1,36 +1,40 @@
-# TanStack Start - Basic Example
+# quantizor's studio
 
-This is the basic TanStack Start example, demonstrating the fundamentals of building applications with TanStack Router and TanStack Start.
+Personal creative coding playground. A mix of generative art, GPU experiments, and games — all built on the web stack.
 
-- [TanStack Router Docs](https://tanstack.com/router)
+## what's in here
 
-It's deployed automagically with Netlify!
+### tension (crystal growth sim)
 
-- [Netlify](https://netlify.com/)
+Real-time crystal growth simulation using diffusion-limited aggregation under polarized light. Three.js powered. `src/projects/tension/`
 
-## Start a new project based on this example
+### brutalist design system
 
-To start a new project based on this example, run:
+Hand-rolled component library with a dark brutalist cyberpunk vibe. Buttons, cards, inputs, sliders, tooltips, toggle groups — the works. All built on CSS variables and Tailwind v4. There's a live showcase at `/ui`. `src/ui/`
+
+### speed dial homepage
+
+The homepage is a speed dial grid (like an old-school browser new tab page) that links to the various projects. `src/components/SpeedDial/`
+
+## tech
+
+- TanStack Start (file-based routing, SSR)
+- React 19
+- Three.js for 3D
+- TypeGPU for GPU/shader work
+- Tailwind CSS v4
+- Bun for runtime + tests
+- TypeScript (strict, no `any`)
+
+## running it
 
 ```sh
-npx gitpick TanStack/router/tree/main/examples/react/start-basic start-basic
+bun install
+bun dev
 ```
 
-## Getting Started
-
-From your terminal:
+Tests (mostly for the game engine):
 
 ```sh
-pnpm install
-pnpm dev
-```
-
-This starts your app in development mode, rebuilding assets on file changes.
-
-## Build
-
-To build the app for production:
-
-```sh
-pnpm build
+bun test src/games/
 ```
