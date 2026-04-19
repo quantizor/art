@@ -459,17 +459,30 @@ export function computeAgateColor(
 export interface SeedTiltData {
   grainBrightness: number
   colorRetention: number
+  /** cos of primary axis orientation — used to rotate fBM warp into seed-local frame */
+  cosOrient: number
+  /** sin of primary axis orientation */
+  sinOrient: number
+  /** fBM noise-space X offset (decorrelates warp between seeds) */
+  noiseOffsetX: number
+  /** fBM noise-space Y offset */
+  noiseOffsetY: number
 }
 
-/** Precompute tilt-dependent values for a seed (call once per seed) */
-export function precomputeSeedTilt(tilt: number): SeedTiltData {
-  const cosTilt = Math.cos(tilt)
+/** Precompute tilt + warp-frame values for a seed (call once per seed) */
+export function precomputeSeedTilt(seed: { tilt: number; axes: number[]; noiseOffsetX: number; noiseOffsetY: number }): SeedTiltData {
+  const cosTilt = Math.cos(seed.tilt)
   const cos2Tilt = cosTilt * cosTilt
   const [brightBase, brightRange] = currentProfile.tiltBrightness
   const [retBase, retRange] = currentProfile.tiltRetention
+  const orient = seed.axes[0] ?? 0
   return {
     grainBrightness: brightBase + brightRange * cos2Tilt,
     colorRetention: retBase + retRange * cos2Tilt,
+    cosOrient: Math.cos(orient),
+    sinOrient: Math.sin(orient),
+    noiseOffsetX: seed.noiseOffsetX,
+    noiseOffsetY: seed.noiseOffsetY,
   }
 }
 
@@ -535,11 +548,17 @@ export function computeColorDirect(
   const dist = rawDist + jitter0 + (jitter1 - jitter0) * sfrac * sfrac * (3 - 2 * sfrac)
 
   // ── fBM warp ──
-  // Use dx/dy directly instead of reconstructing from angle via cos/sin.
-  // This eliminates 2 trig calls per pixel.
+  // Rotate (dx,dy) into the seed's local crystal-axis frame and apply
+  // the per-seed noise offset so each seed samples a unique region of
+  // the fBM field aligned with its own primary axis. Without this every
+  // seed grows an identical warp pattern translated to its center.
+  const cosA = tiltData.cosOrient
+  const sinA = tiltData.sinOrient
+  const rdx = dx * cosA - dy * sinA
+  const rdy = dx * sinA + dy * cosA
   const ns = currentProfile.bandNoiseScale
-  let nx = dx * ns
-  let ny = dy * ns
+  let nx = rdx * ns + tiltData.noiseOffsetX
+  let ny = rdy * ns + tiltData.noiseOffsetY
   // Inline fBM with lacunarity=2, H from profile => pwHL = 2^-H (precomputed)
   const pwHL = bandPwHL
   const octaves = currentProfile.bandOctaves

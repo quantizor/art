@@ -77,6 +77,10 @@ export interface Seed {
   axes: number[]
   /** Crystal plane tilt — small per-seed angle offset for color variation */
   tilt: number
+  /** Per-seed fBM noise offset X — decorrelates warp patterns between seeds */
+  noiseOffsetX: number
+  /** Per-seed fBM noise offset Y */
+  noiseOffsetY: number
 }
 
 /** Parameters controlling the simulation */

@@ -107,7 +107,13 @@ export class FloodFillSimulation {
     // Random tilt per crystal — varies effective retardation and brightness
     const tilt = (seedRng() - 0.5) * 2 * this.profile.tiltRange
 
-    const seed: Seed = { id, x: cx, y: cy, axes, tilt }
+    // Per-seed noise offsets so each crystal samples a different region
+    // of the fBM field — prevents every seed from growing an identical
+    // warp pattern translated to its center.
+    const noiseOffsetX = seedRng() * 1000
+    const noiseOffsetY = seedRng() * 1000
+
+    const seed: Seed = { id, x: cx, y: cy, axes, tilt, noiseOffsetX, noiseOffsetY }
     this.seeds.push(seed)
     this.seedMap.set(id, seed)
     this.seedIdsCache.push(id)
@@ -324,6 +330,14 @@ export class FloodFillSimulation {
     heap: MinHeap,
     seed: Seed
   ): void {
+    // Rotate fBM sampling into each seed's own crystal-axis frame so
+    // its growth shape aligns with its chosen primary axis instead of
+    // sharing a single global warp pattern with every other seed.
+    const orient = seed.axes[0]
+    const cosA = Math.cos(orient)
+    const sinA = Math.sin(orient)
+    const offX = seed.noiseOffsetX
+    const offY = seed.noiseOffsetY
     for (let d = 0; d < 8; d++) {
       const nx = cx + DX[d]
       const ny = cy + DY[d]
@@ -347,10 +361,14 @@ export class FloodFillSimulation {
           const bx = dx * invScale
           const by = dy * invScale
 
+          // Rotate into seed-local frame and apply per-seed noise offset
+          const rbx = bx * cosA - by * sinA
+          const rby = bx * sinA + by * cosA
+
           // Inline fBM (matches color mapper exactly)
           const ns = this.profile.growthNoiseScale
-          let fnx = bx * ns
-          let fny = by * ns
+          let fnx = rbx * ns + offX
+          let fny = rby * ns + offY
           const pwHL = Math.pow(2, -this.profile.growthH)
           const octaves = this.profile.growthOctaves
           let warp = 0

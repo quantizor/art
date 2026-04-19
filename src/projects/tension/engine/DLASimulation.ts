@@ -72,7 +72,7 @@ export class DLASimulation {
     }
 
     const tilt = (Math.random() - 0.5) * 0.3
-    const seed: Seed = { id, x: cx, y: cy, axes, tilt }
+    const seed: Seed = { id, x: cx, y: cy, axes, tilt, noiseOffsetX: Math.random() * 1000, noiseOffsetY: Math.random() * 1000 }
     this.seeds.push(seed)
     this.seedMap.set(id, seed)
 
@@ -101,7 +101,7 @@ export class DLASimulation {
       }
 
       const tilt = (Math.random() - 0.5) * 0.3
-      const seed: Seed = { id, x: cx, y: cy, axes, tilt }
+      const seed: Seed = { id, x: cx, y: cy, axes, tilt, noiseOffsetX: Math.random() * 1000, noiseOffsetY: Math.random() * 1000 }
       this.seeds.push(seed)
       this.seedMap.set(id, seed)
 

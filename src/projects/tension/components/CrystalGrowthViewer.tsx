@@ -131,11 +131,12 @@ export function CrystalGrowthViewer() {
       const seed = sim.getSeed(seedId)
       const seedOrientation = seed ? seed.axes[0] : 0
 
-      // Get or create precomputed tilt data for this seed
+      // Get or create precomputed tilt + warp-frame data for this seed
       let tiltData = seedTiltCacheRef.current.get(seedId)
       if (!tiltData) {
-        const seedTilt = seed ? seed.tilt : 0
-        tiltData = precomputeSeedTilt(seedTilt)
+        tiltData = precomputeSeedTilt(
+          seed ?? { tilt: 0, axes: [0], noiseOffsetX: 0, noiseOffsetY: 0 }
+        )
         seedTiltCacheRef.current.set(seedId, tiltData)
       }
 
