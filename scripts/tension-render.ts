@@ -179,24 +179,34 @@ async function main() {
     buildSeed(masterSeed, i, p.x, p.y, sim.axisCount, agateProfile)
   )
 
-  // Single partition — A and B share the same cavity layout; the
-  // active experiment only changes how non-cavity pixels are painted.
-  const { gridData } = partitionCavities(
-    seeds, W, H,
-    agateProfile.growthNoiseScale * 0.22,
-    0.065
-  )
-  const wallDist = computeWallDistance(gridData, W, H)
-  const septum = computeInterSeedMask(gridData, W, H, 1)
+  // Dual partition — A at baseline cavity-outline noise, B at the
+  // current-experimental value. Each side gets its own gridData,
+  // wallDist, septum mask, and per-seed max wall distance so cavity
+  // geometry can vary between A and B as part of the active A/B
+  // candidate. Parity mode collapses both to baseline for validation.
+  const partitionScaleA = agateProfile.growthNoiseScale * 0.22       // baseline: ~32 frills per cavity
+  const partitionScaleB = values.parity ? partitionScaleA
+                                        : agateProfile.growthNoiseScale * 0.045 // experiment: ~6 gentle dips
+  const { gridData: gridA } = partitionCavities(seeds, W, H, partitionScaleA, 0.065)
+  const { gridData: gridB } = partitionCavities(seeds, W, H, partitionScaleB, 0.065)
+  const wallDistA = computeWallDistance(gridA, W, H)
+  const wallDistB = computeWallDistance(gridB, W, H)
+  const septumA = computeInterSeedMask(gridA, W, H, 1)
+  const septumB = computeInterSeedMask(gridB, W, H, 1)
 
-  const seedMaxWallDist = new Map<number, number>()
-  for (let i = 0; i < gridData.length; i++) {
-    const s = gridData[i]
-    if (s === 0) continue
-    const w = wallDist[i]
-    const cur = seedMaxWallDist.get(s) ?? 0
-    if (w > cur) seedMaxWallDist.set(s, w)
+  const buildMaxWallDist = (grid: Uint16Array, wallDist: Uint16Array): Map<number, number> => {
+    const m = new Map<number, number>()
+    for (let i = 0; i < grid.length; i++) {
+      const s = grid[i]
+      if (s === 0) continue
+      const w = wallDist[i]
+      const cur = m.get(s) ?? 0
+      if (w > cur) m.set(s, w)
+    }
+    return m
   }
+  const maxWallDistA = buildMaxWallDist(gridA, wallDistA)
+  const maxWallDistB = buildMaxWallDist(gridB, wallDistB)
 
   const seedsMap = new Map(seeds.map(s => [s.id, s]))
   const tiltCache = new Map(seeds.map(s => [s.id, precomputeSeedTilt(s)]))
