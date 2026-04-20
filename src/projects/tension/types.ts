@@ -10,7 +10,6 @@ export interface CrystalProfile {
   maxGrainArea: number
 
   // Band structure (ColorMapper)
-  growthPattern: GrowthPattern
   bandNoiseScale: number
   bandOctaves: number
   bandH: number
@@ -82,13 +81,8 @@ export interface SimulationParams {
   aspectRatio: number
 }
 
-/** Growth pattern — determines how color varies within each crystal */
-export type GrowthPattern = 'linear' | 'radial'
-
 /** Parameters for band color mapping */
 export interface ColorParams {
-  /** Growth pattern: 'linear' = gradient across grain, 'radial' = concentric from center */
-  growthPattern: GrowthPattern
   /** Band wavelength in grid units */
   bandWavelength: number
   /** Band amplitude (0-1) */
@@ -101,10 +95,4 @@ export interface ColorParams {
   monoHue: number
 }
 
-/** RGB color tuple (0-1 range) */
-export interface RGBColor {
-  r: number
-  g: number
-  b: number
-}
 

@@ -1,23 +1,18 @@
 /**
  * Crystal Renderer
  *
- * Renders DLA crystal growth as a DataTexture on a full-grid quad.
- * Each grid cell maps to one pixel — produces continuous, gap-free
- * color fields that look like polarized light microphotography.
+ * Renders the cavity partition + wall-distance reveal as a DataTexture
+ * on a full-grid quad. Each grid cell maps to one pixel.
  *
- * Includes a boundary-strain post-processing pass that diffuses
- * pressure inward from grain boundaries, simulating photoelastic
- * stress birefringence visible in real thin sections.
- *
- * Performance: uses computeColorDirect() to write RGBA bytes directly
- * to the texture buffer (zero intermediate allocations). Boundary
- * strain uses an incrementally-maintained set of candidate cells
- * instead of scanning the full grid.
+ * Post-processing: boundary-strain pass diffuses pressure inward from
+ * inter-seed grain boundaries using an incrementally-maintained set
+ * of candidate cells.
  */
 
 import * as THREE from 'three'
-import { computeColorDirect, computeColorWallBased, invalidateBandCache, precomputeSeedTilt } from '../engine/ColorMapper'
+import { computeColorWallBased, invalidateBandCache, precomputeSeedTilt } from '../engine/ColorMapper'
 import type { SeedTiltData } from '../engine/ColorMapper'
+import { computeInterSeedMask } from '../engine/WallDistance'
 import { GRID_WIDTH, GRID_HEIGHT, GRID_SCALE } from '../constants'
 import type { ColorParams, Seed } from '../types'
 
@@ -51,7 +46,7 @@ export class CrystalRenderer {
   private lastStrainedCells: Uint32Array = new Uint32Array(0)
   private lastStrainedCount = 0
 
-  /** Grid data reference for boundary detection during addParticleDirect */
+  /** Grid data reference for per-cell seed lookup during reveal. */
   private gridData: Uint16Array | null = null
 
   /** Per-seed pastel placeholder colour cache (rgb packed into 3 bytes). */
@@ -68,6 +63,7 @@ export class CrystalRenderer {
   private revealOrder: Uint32Array | null = null
   private revealCursor = 0
   private revealWallDist: Uint16Array | null = null
+  private interSeedMask: Uint8Array | null = null
   private revealSeeds: Map<number, Seed> | null = null
   private revealTiltCache: Map<number, SeedTiltData> = new Map()
   private revealColorParams: ColorParams | null = null
@@ -78,6 +74,14 @@ export class CrystalRenderer {
    * cross-fade sparkles between the old and new cell sets.
    */
   private previousRevealOrder: Uint32Array | null = null
+
+  /**
+   * Flat per-cell dissolve state: tex byte-offsets and 8-bit stable
+   * hashes. Precomputed at captureForDissolve so the per-frame loop
+   * avoids the (idx/W) divide and the 2D hash mix on every cell.
+   */
+  private dissolveOffs: Uint32Array | null = null
+  private dissolveHashes: Uint8Array | null = null
   /** Walk pointer into the cell-order-independent (raw idx) precompute loop. */
   private precomputeIdx = 0
   private precomputeDone = false
@@ -124,92 +128,6 @@ export class CrystalRenderer {
   /** Set grid data reference for incremental boundary detection */
   setGridData(gridData: Uint16Array): void {
     this.gridData = gridData
-  }
-
-  /**
-   * Write a crystal pixel directly to the texture buffer using the
-   * zero-allocation computeColorDirect path.
-   *
-   * Accepts raw (dx, dy) offsets from the seed center instead of
-   * (angle, distFromSeed) to avoid the atan2/sqrt roundtrip.
-   *
-   * Also incrementally detects boundary candidates: when a newly
-   * claimed cell has neighbors belonging to a different seed, both
-   * the new cell and its foreign neighbors are added to the boundary
-   * candidate set.
-   */
-  addParticleDirect(
-    cx: number,
-    cy: number,
-    dx: number,
-    dy: number,
-    seedId: number,
-    colorParams: ColorParams,
-    seedOrientation: number,
-    tiltData: SeedTiltData
-  ): void {
-    // DataTexture row 0 = bottom in OpenGL, grid row 0 = top -> flip Y
-    const texY = GRID_HEIGHT - 1 - cy
-    const offset = (texY * GRID_WIDTH + cx) * 4
-
-    // Write color directly to both display and base texture buffers.
-    // computeColorDirect writes to both buf and baseBuf in one pass,
-    // eliminating the separate 4-byte copy per pixel.
-    computeColorDirect(
-      dx, dy, colorParams,
-      seedOrientation, tiltData,
-      this.textureData, this.baseTextureData, offset
-    )
-
-    // ── Incremental boundary detection ──
-    // Check 8-connected neighbors for foreign seeds. If found, mark
-    // both this cell and the foreign neighbor as boundary candidates.
-    const grid = this.gridData
-    if (grid) {
-      const W = GRID_WIDTH
-      const idx = cy * W + cx
-      const minX = cx > 0 ? 1 : 0
-      const maxX = cx < W - 1 ? 1 : 0
-      const minY = cy > 0 ? 1 : 0
-      const maxY = cy < GRID_HEIGHT - 1 ? 1 : 0
-
-      // Check cardinal + diagonal neighbors
-      if (minX && grid[idx - 1] > 0 && grid[idx - 1] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx - 1)
-      }
-      if (maxX && grid[idx + 1] > 0 && grid[idx + 1] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx + 1)
-      }
-      if (minY && grid[idx - W] > 0 && grid[idx - W] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx - W)
-      }
-      if (maxY && grid[idx + W] > 0 && grid[idx + W] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx + W)
-      }
-      if (minX && minY && grid[idx - W - 1] > 0 && grid[idx - W - 1] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx - W - 1)
-      }
-      if (maxX && minY && grid[idx - W + 1] > 0 && grid[idx - W + 1] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx - W + 1)
-      }
-      if (minX && maxY && grid[idx + W - 1] > 0 && grid[idx + W - 1] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx + W - 1)
-      }
-      if (maxX && maxY && grid[idx + W + 1] > 0 && grid[idx + W + 1] !== seedId) {
-        this.boundaryCandidates.add(idx)
-        this.boundaryCandidates.add(idx + W + 1)
-      }
-    }
-
-    this.particleCount++
-    this.dirty = true
   }
 
   /** Flush texture updates to GPU — call once per frame */
@@ -474,6 +392,11 @@ export class CrystalRenderer {
     this.revealColorParams = colorParams
     this.revealTiltCache.clear()
     this.gridData = gridData
+    // Inter-seed septum mask: forces a dark crust between adjacent
+    // nodules even when the specimen's palette rolled no Mn shell.
+    // Radius of 3 cells gives a ~6-cell-thick visible septum spanning
+    // both sides of the Voronoi edge.
+    this.interSeedMask = computeInterSeedMask(gridData, GRID_WIDTH, GRID_HEIGHT, 3)
 
     // Allocate the precompute buffer but leave it empty; caller pumps
     // the precompute in chunks via precomputeChunk() so the main thread
@@ -518,6 +441,11 @@ export class CrystalRenderer {
     const invScale = 1 / GRID_SCALE
     const N = grid.length
     const end = Math.min(this.precomputeIdx + count, N)
+    const septum = this.interSeedMask
+    // Septum colour — warm very-dark (OKLCH-ish L≈0.13, C≈0.012, H≈25).
+    // Hardcoded byte values so we avoid the OKLCH→sRGB conversion per
+    // cell; this matches the upper end of the Mn shell family visually.
+    const SEPTUM_R = 26, SEPTUM_G = 22, SEPTUM_B = 18
 
     for (let i = this.precomputeIdx; i < end; i++) {
       const seedId = grid[i]
@@ -540,9 +468,20 @@ export class CrystalRenderer {
         colorParams,
         seed.axes[0] ?? 0,
         tilt,
+        seedId,
         rc, rc, i * 4,
         cavityMax
       )
+      // Override inter-seed boundary cells with the host-rock septum.
+      // Models the physical rock between adjacent nodules, which stays
+      // visible regardless of whether the specimen rolled an Mn shell.
+      if (septum && septum[i]) {
+        const off = i * 4
+        rc[off] = SEPTUM_R
+        rc[off + 1] = SEPTUM_G
+        rc[off + 2] = SEPTUM_B
+        rc[off + 3] = 255
+      }
     }
 
     this.precomputeIdx = end
@@ -798,67 +737,79 @@ export class CrystalRenderer {
     }
     this.fadeSource.set(this.textureData)
     this.sparkleCount = 0
+
+    // Precompute flat per-cell (byte-offset, 8-bit stable hash) arrays
+    // so the per-frame dissolve loop skips the (idx/W) divide and the
+    // 2D hash mix entirely. Hash is derived from cx/cy through distinct
+    // primes so neighbours decorrelate and the dissolve reads as white
+    // noise, not a pattern.
+    const order = this.revealOrder
+    if (!order) {
+      this.dissolveOffs = null
+      this.dissolveHashes = null
+      return
+    }
+    const n = order.length
+    if (!this.dissolveOffs || this.dissolveOffs.length !== n) {
+      this.dissolveOffs = new Uint32Array(n)
+      this.dissolveHashes = new Uint8Array(n)
+    }
+    const offs = this.dissolveOffs
+    const hashes = this.dissolveHashes!
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    for (let k = 0; k < n; k++) {
+      const idx = order[k]
+      const cy = (idx / W) | 0
+      const cx = idx - cy * W
+      offs[k] = ((H - 1 - cy) * W + cx) * 4
+      let h = (Math.imul(cx, 374761393) ^ Math.imul(cy, 668265263)) | 0
+      h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
+      h = (h ^ (h >>> 16)) >>> 0
+      hashes[k] = h & 0xff
+    }
   }
 
   /**
-   * Per-cell stochastic dissolve: each cell has a stable hash-derived
-   * threshold. When `progress` crosses that threshold, the cell flips
-   * hard from design colour to black — so the design "eats away" in a
-   * scattered pattern rather than fading uniformly. Sparkle density
-   * ramps with progress. At progress=1 the canvas is a full sparkle
-   * field over a black cavity — the growing-phase start state, so
-   * handoff is pixel-continuous with no black frame in between.
+   * Per-cell stochastic dissolve: smoothstep-eased progress drives a
+   * moving hash-threshold window across the cell field. Within the
+   * window each cell fades with its own smoothstep. At progress=1 the
+   * canvas is a sparkle field over black — the growing-phase start
+   * state, so handoff is pixel-continuous.
    */
   drawParticleDissolve(progress: number, sparkleCount: number, pulse: number): void {
     const tex = this.textureData
     const src = this.fadeSource
     const order = this.revealOrder
-    if (!src || !order) { this.dirty = true; return }
+    const offs = this.dissolveOffs
+    const hashes = this.dissolveHashes
+    if (!src || !order || !offs || !hashes) { this.dirty = true; return }
 
-    const W = GRID_WIDTH
-    const H = GRID_HEIGHT
     const p = progress < 0 ? 0 : progress > 1 ? 1 : progress
-
     this.clearSparkles()
 
-    // Smoothstep the progress used for the design fade. Linear progress
-    // makes the dissolve feel front-heavy — the design disappears too
-    // fast at the start and drags at the end. Easing delays the bulk of
-    // the fade to the middle of the tween, where sparkle density is
-    // also at its peak, so sparkle has room to "take over" visually.
     const pEased = p * p * (3 - 2 * p)
+    const WINDOW_BYTES = 0.12 * 256
+    const lowB = pEased * 256 - WINDOW_BYTES
+    const highB = pEased * 256 + WINDOW_BYTES
+    const invRange = 1 / (WINDOW_BYTES * 2)
 
-    // Per-cell 2D hash → stable per-cell dissolve threshold. Mixing cx
-    // and cy through distinct primes before scrambling decorrelates
-    // neighbours in both axes so the dissolve reads as white noise.
-    // A narrow window keeps the fade "front" from looking mottled.
-    const WINDOW = 0.12
-    const low = pEased - WINDOW
-    const high = pEased + WINDOW
-    const invWindow = 1 / (WINDOW * 2)
-    for (let k = 0; k < order.length; k++) {
-      const idx = order[k]
-      const cy = (idx / W) | 0
-      const cx = idx - cy * W
-      const texY = H - 1 - cy
-      const off = (texY * W + cx) * 4
-      let h = (Math.imul(cx, 374761393) ^ Math.imul(cy, 668265263)) | 0
-      h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
-      h = (h ^ (h >>> 16)) >>> 0
-      const cellTh = h / 4294967295
-      if (cellTh <= low) {
-        tex[off] = 0
-        tex[off + 1] = 0
-        tex[off + 2] = 0
-        tex[off + 3] = src[off + 3]
-      } else if (cellTh >= high) {
+    const n = offs.length
+    for (let k = 0; k < n; k++) {
+      const hb = hashes[k]
+      const off = offs[k]
+      if (hb >= highB) {
         tex[off] = src[off]
         tex[off + 1] = src[off + 1]
         tex[off + 2] = src[off + 2]
         tex[off + 3] = src[off + 3]
+      } else if (hb <= lowB) {
+        tex[off] = 0
+        tex[off + 1] = 0
+        tex[off + 2] = 0
+        tex[off + 3] = src[off + 3]
       } else {
-        // Smoothstep the per-cell interpolation for a softer flip.
-        const u = (cellTh - low) * invWindow
+        const u = (hb - lowB) * invRange
         const s = u * u * (3 - 2 * u)
         const fade = (s * 256) | 0
         tex[off] = (src[off] * fade) >> 8
@@ -868,11 +819,10 @@ export class CrystalRenderer {
       }
     }
 
-    // Baseline sparkle stays high enough that the field is already
-    // visually present when the dissolve starts, so the handoff to the
-    // growing-phase orb doesn't read as a density jump.
-    const n = (1200 + p * sparkleCount) | 0
-    this.splatSparklesFromOrder(order, n, 0, order.length, pulse)
+    // Baseline chosen so total dissolve sparkle density matches the
+    // revealing-phase "general sparkle" level (~1400/frame typical).
+    const nSparkle = (250 + p * sparkleCount) | 0
+    this.splatSparklesFromOrder(order, nSparkle, 0, order.length, pulse)
 
     this.dirty = true
   }
@@ -982,6 +932,7 @@ export class CrystalRenderer {
     this.revealOrder = null
     this.revealCursor = 0
     this.revealWallDist = null
+    this.interSeedMask = null
     this.revealSeeds = null
     this.revealColorParams = null
     this.revealTiltCache.clear()

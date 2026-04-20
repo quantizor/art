@@ -157,5 +157,95 @@ export function partitionCavities(
     if (gridData[i] !== 0 && !visited[i]) gridData[i] = 0
   }
 
+  // Morphological opening — erode then dilate each seed's region so
+  // tendrils thinner than ~2·OPENING_RADIUS cells get cut back to
+  // host rock. Prunes "peninsula" artefacts where a seed's Voronoi
+  // territory was pinched into a thin strip by neighbouring seeds.
+  // Bulk nodule shapes are preserved (thick interior stays thick).
+  morphologicalOpening(gridData, W, H, 3)
+
   return { gridData, seedBBox }
+}
+
+/**
+ * Binary morphological opening (erode → dilate) per-seed. A cell
+ * "erodes" if it isn't `radius` cells deep in all four cardinal
+ * directions of its own seed. The erode set then dilates back up to
+ * `radius` via same-seed BFS, so thick shapes return to their full
+ * silhouette but thin strips (which had no eroded core) stay culled.
+ */
+function morphologicalOpening(
+  gridData: Uint16Array,
+  W: number,
+  H: number,
+  radius: number
+): void {
+  const N = W * H
+  const survivors = new Uint8Array(N)
+  const queue = new Int32Array(N)
+  const depth = new Uint8Array(N)
+  let tail = 0
+
+  // Erode: thick cells are those with same-seed neighbours `radius`
+  // cells away in each cardinal direction. Cheaper than a full disk
+  // check and good enough to detect strips narrower than 2·radius.
+  for (let y = radius; y < H - radius; y++) {
+    for (let x = radius; x < W - radius; x++) {
+      const idx = y * W + x
+      const s = gridData[idx]
+      if (s === 0) continue
+      if (
+        gridData[idx - radius] === s &&
+        gridData[idx + radius] === s &&
+        gridData[idx - radius * W] === s &&
+        gridData[idx + radius * W] === s
+      ) {
+        survivors[idx] = 1
+        depth[idx] = 0
+        queue[tail++] = idx
+      }
+    }
+  }
+
+  // Dilate: BFS from survivors to depth `radius`, only into same-seed
+  // cells of the original grid. Cells reachable within radius of a
+  // thick core stay; everything else gets culled.
+  let head = 0
+  while (head < tail) {
+    const idx = queue[head++]
+    const d = depth[idx]
+    if (d >= radius) continue
+    const s = gridData[idx]
+    const y = (idx / W) | 0
+    const x = idx - y * W
+    if (x > 0) {
+      const ni = idx - 1
+      if (!survivors[ni] && gridData[ni] === s) {
+        survivors[ni] = 1; depth[ni] = d + 1; queue[tail++] = ni
+      }
+    }
+    if (x < W - 1) {
+      const ni = idx + 1
+      if (!survivors[ni] && gridData[ni] === s) {
+        survivors[ni] = 1; depth[ni] = d + 1; queue[tail++] = ni
+      }
+    }
+    if (y > 0) {
+      const ni = idx - W
+      if (!survivors[ni] && gridData[ni] === s) {
+        survivors[ni] = 1; depth[ni] = d + 1; queue[tail++] = ni
+      }
+    }
+    if (y < H - 1) {
+      const ni = idx + W
+      if (!survivors[ni] && gridData[ni] === s) {
+        survivors[ni] = 1; depth[ni] = d + 1; queue[tail++] = ni
+      }
+    }
+  }
+
+  // Cull non-survivors back to host rock.
+  for (let i = 0; i < N; i++) {
+    if (gridData[i] !== 0 && !survivors[i]) gridData[i] = 0
+  }
 }

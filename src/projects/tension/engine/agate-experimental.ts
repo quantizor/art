@@ -14,7 +14,8 @@
 import type { BandColor, BandColorStrategy } from './color-strategy'
 import type { CrystalProfile } from '../types'
 import type { PRNG } from './SeededRandom'
-import { isZonalLayout, isOnyxLayout, isDyedSpecimen, getVariantOverride } from './ColorMapper'
+import { isZonalLayout, isOnyxLayout, isDyedSpecimen, isIrisLayout, getIrisPaletteIdx } from './ColorMapper'
+import { cellHash } from './Noise'
 
 // Curated "dye" hues — the actual colours commercial agate dyes ship
 // in. Extreme saturation that doesn't exist in natural chromophores.
@@ -71,10 +72,14 @@ const FAMILIES: Family[] = [
   { L: [0.62, 0.82], C: [0.06, 0.18], H: [215, 245], weight: 0.05 },
   // Rhodochrosite pink — Mn2+, brighter rose.
   { L: [0.58, 0.76], C: [0.08, 0.14], H: [355, 15], weight: 0.03 },
-  // Manganese oxide / organic shell — pyrolusite black, the crust that
-  // bounds real agate nodules. Pure neutral grayscale (C=0), so the hue
-  // value is irrelevant — always reads as black-adjacent.
-  { L: [0.04, 0.14], C: [0.00, 0.00], H: [0, 0], weight: 0.02 },
+  // Manganese oxide / organic shell — pyrolusite crust bounding real
+  // agate nodules. Against a pure-black cavity background a perfectly
+  // neutral L=0.04 shell vanishes into the void. Real pyrolusite is
+  // slightly warm from trace iron, so a faint warm-brown cast
+  // (C≈0.01, H≈25) plus a 0.09 L floor gives the shell just enough
+  // tonal + chroma separation from black to read as an edge without
+  // looking painted.
+  { L: [0.09, 0.18], C: [0.006, 0.018], H: [15, 35], weight: 0.02 },
 ]
 
 // ─── Generator options ──────────────────────────────────────
@@ -154,7 +159,12 @@ type Regime = 'chalcedony' | 'stained'
 // happy pride
 type IrisPalette = readonly [number, number, number][]
 
+// Each entry is [L, C, H] in OKLCH. Palettes cycle through the bands of
+// an iris specimen (bandIdx 0 + bandIdx 1 both take entry 0, then
+// bandIdx 2+ cycles through the rest). Palette index is per-seed so
+// adjacent nodules in an iris specimen can show different flags.
 const IRIS_PALETTES: readonly IrisPalette[] = [
+  // Rainbow (LGBT+)
   [
     [0.55, 0.20, 28],
     [0.72, 0.17, 55],
@@ -163,6 +173,7 @@ const IRIS_PALETTES: readonly IrisPalette[] = [
     [0.50, 0.17, 245],
     [0.45, 0.15, 308],
   ],
+  // Trans
   [
     [0.80, 0.08, 218],
     [0.80, 0.08, 348],
@@ -170,11 +181,13 @@ const IRIS_PALETTES: readonly IrisPalette[] = [
     [0.80, 0.08, 348],
     [0.80, 0.08, 218],
   ],
+  // Bi
   [
     [0.58, 0.20, 345],
     [0.42, 0.13, 300],
     [0.48, 0.18, 260],
   ],
+  // Lesbian
   [
     [0.60, 0.18, 38],
     [0.78, 0.17, 58],
@@ -182,21 +195,75 @@ const IRIS_PALETTES: readonly IrisPalette[] = [
     [0.80, 0.10, 355],
     [0.52, 0.20, 340],
   ],
+  // Pan
   [
     [0.60, 0.22, 348],
     [0.92, 0.17, 95],
     [0.78, 0.15, 205],
   ],
+  // Ace
   [
     [0.12, 0.00, 0],
     [0.55, 0.00, 0],
     [0.96, 0.00, 0],
     [0.42, 0.15, 305],
   ],
+  // Genderqueer (was mis-labeled "nonbinary")
   [
     [0.64, 0.14, 305],
     [0.96, 0.01, 90],
     [0.86, 0.15, 125],
+  ],
+  // Nonbinary — yellow, white, purple, black
+  [
+    [0.90, 0.17, 92],
+    [0.96, 0.01, 90],
+    [0.42, 0.17, 305],
+    [0.12, 0.00, 0],
+  ],
+  // Aromantic — dark green, light green, white, gray, black
+  [
+    [0.45, 0.10, 145],
+    [0.82, 0.13, 135],
+    [0.96, 0.01, 90],
+    [0.55, 0.00, 0],
+    [0.12, 0.00, 0],
+  ],
+  // Genderfluid — pink, white, purple, black, blue
+  [
+    [0.72, 0.18, 355],
+    [0.96, 0.01, 90],
+    [0.42, 0.17, 305],
+    [0.12, 0.00, 0],
+    [0.50, 0.17, 245],
+  ],
+  // Agender — black, gray, white, green, white, gray, black
+  [
+    [0.12, 0.00, 0],
+    [0.55, 0.00, 0],
+    [0.96, 0.01, 90],
+    [0.86, 0.10, 135],
+    [0.96, 0.01, 90],
+    [0.55, 0.00, 0],
+    [0.12, 0.00, 0],
+  ],
+  // Polysexual — pink, green, blue
+  [
+    [0.66, 0.22, 350],
+    [0.78, 0.18, 145],
+    [0.55, 0.20, 240],
+  ],
+  // Leather — black/blue stripes with a white-red-white heart accent
+  [
+    [0.10, 0.00, 0],
+    [0.32, 0.12, 245],
+    [0.10, 0.00, 0],
+    [0.32, 0.12, 245],
+    [0.95, 0.01, 90],
+    [0.55, 0.22, 25],
+    [0.95, 0.01, 90],
+    [0.32, 0.12, 245],
+    [0.10, 0.00, 0],
   ],
 ]
 
@@ -230,31 +297,71 @@ class AgateBandGenerator {
   private readonly dyed: boolean
   /** Chosen hue for dyed specimens. */
   private readonly dyeHue: number
+  /** Optional natural-variant central pool (druse, fire, moss, amber). Only
+   *  applied to natural specimens — onyx has its own pool, zonal its eye,
+   *  iris/dyed override bands wholesale. */
+  private readonly centralPool: { L: number; C: number; H: number; famIdx: number } | null
 
   constructor(
     opts: AgateOptions,
     rng: PRNG = Math.random,
     zonal = false,
     onyx = false,
-    dyed = false
+    dyed = false,
+    iris = false,
+    irisPaletteIdx = 0,
+    dyeHueIdx = 0,
+    shellHash = 0
   ) {
     this.opts = opts
     this.rng = rng
-    const override = getVariantOverride()
-    this.iris = override === 'iris' ? true : override !== 'random' ? false : rng() < 0.15
-    const paletteIdx = (rng() * IRIS_PALETTES.length) | 0
-    this.irisPalette = IRIS_PALETTES[paletteIdx]
-    this.shellHash = rng()
-    // Onyx takes precedence over iris/zonal if both flags would fire.
+    // Specialty-variant flags + shell decision are specimen-level: so
+    // adjacent nodules share deposition style AND whether they have
+    // an Mn shell. Shared shell presence means the inter-seed Voronoi
+    // boundary renders as a visible dark rock septum between nodules.
+    this.iris = iris
+    this.irisPalette = IRIS_PALETTES[irisPaletteIdx]
+    this.shellHash = shellHash
     this.onyx = onyx && !this.iris
-    // Dyed specimens coexist with zonal (becomes a single-hue zonal nodule)
-    // but not with iris or onyx (those already override colour wholesale).
     this.dyed = dyed && !this.iris && !this.onyx
-    this.dyeHue = DYE_HUES[(rng() * DYE_HUES.length) | 0]
-    // Zonal decisions pulled from the same RNG so they stay deterministic.
+    this.dyeHue = DYE_HUES[dyeHueIdx]
     this.zonal = zonal && !this.iris && !this.onyx
+    // "Has eye" + quiet-family choice stay per-seed so adjacent zonal
+    // nodules can settle differently within the same deposition style.
     this.zonalHasEye = rng() < 0.70
     this.zonalQuietFam = rng() < 0.55 ? 6 : 1 // blue-lace-leaning majority
+    // Central pool — a solid inner region that breaks up the outer
+    // band cycle. Skipped for onyx (has its own pool), zonal (has its
+    // eye), and dyed (single-hue specimen by design).
+    this.centralPool = null
+    if (this.iris) {
+      // Iris: ~30% chance of finishing with one stripe of the palette
+      // as a solid pool, picked per-seed so paired iris nodules can
+      // land on different pool colours.
+      if (rng() < 0.30) {
+        const stripeIdx = (rng() * this.irisPalette.length) | 0
+        const [pL, pC, pH] = this.irisPalette[stripeIdx]
+        this.centralPool = { L: pL, C: pC, H: pH, famIdx: -1 }
+      }
+    } else if (!this.onyx && !this.dyed && !this.zonal) {
+      // Natural: 60% chance of a physical mineral pool — quartz druse,
+      // fire hematite, moss chlorite, or amber goethite.
+      const poolRoll = rng()
+      let famIdx = -1
+      if (poolRoll < 0.15) famIdx = 0        // druse (white chalcedony)
+      else if (poolRoll < 0.38) famIdx = 4   // fire (hematite)
+      else if (poolRoll < 0.50) famIdx = 5   // moss (chlorite)
+      else if (poolRoll < 0.60) famIdx = 3   // amber (goethite)
+      if (famIdx !== -1) {
+        if (famIdx === 0) {
+          // Druse: brighter than plain chalcedony to read as crystal sparkle.
+          this.centralPool = { L: 0.94 + rng() * 0.04, C: 0.012 + rng() * 0.006, H: 70, famIdx }
+        } else {
+          const [L, C, H] = sampleFromFamily(FAMILIES[famIdx], rng)
+          this.centralPool = { L, C: this.applyVibrancy(C, H), H, famIdx }
+        }
+      }
+    }
     // Start with chalcedony rind — the typical first deposit on the wall.
     this.regime = 'chalcedony'
     this.famIdx = this.pickFamily(0)
@@ -404,6 +511,23 @@ class AgateBandGenerator {
    * low uniformity refreshes more often.
    */
   nextBandColor(bandIdx: number): BandColor {
+    // Natural-specimen central pool (druse / fire / moss / amber) —
+    // bands from threshold inward render a solid pool colour set at
+    // construction. Short-circuits regime/family logic. Only natural
+    // specimens reach this branch; other variants handle their own
+    // inner regions below.
+    if (bandIdx >= 14 && this.centralPool) {
+      const p = this.centralPool
+      this.L = p.L; this.C = p.C; this.H = p.H
+      this.famIdx = p.famIdx
+      // Small jitter for druse so the pool reads as sparkling crystals
+      // rather than a flat wash; solid pools (fire/moss/amber) stay
+      // uniform to match the geological reality.
+      if (p.famIdx === 0) {
+        this.L = p.L + (this.rng() - 0.5) * 0.03
+      }
+      return { L: this.L, C: this.C, H: this.H }
+    }
     // Onyx agate: dramatic black/white alternation with a warm tan rim
     // at the wall and a solid pure-black pool at the centre. Real onyx
     // (banded black chalcedony) forms when residual Mn-saturated fluid
@@ -571,7 +695,10 @@ class AgateBandGenerator {
   }
 }
 
-// ─── Sequence cache (per hueKey — typically per seed) ───────
+// ─── Sequence cache (keyed per (hueKey, seedId) — each seed rolls its
+// own shell, regime, and family sequence independently, while layout
+// decisions (zonal/onyx/dyed) still come from the per-specimen
+// hueKey so adjacent nodules share deposition style. ────────────────
 
 const MAX_CACHED_BANDS = 512
 
@@ -588,15 +715,18 @@ export function setBandRng(rng: PRNG): void {
   sequenceCache.clear()
 }
 
+/** Compound cache key: top bits = hueKey (specimen), low bits = seedId. */
+function seedCacheKey(hueKey: number, seedId: number): number {
+  return ((hueKey & 0xffff) << 16) | (seedId & 0xffff)
+}
+
 /**
- * Deterministic RNG for a given hueKey. Forks the parent band RNG so
- * repeat lookups produce the same sequence, and every nodule's sequence
- * is independent of the order sequences were first requested.
+ * Deterministic RNG forked from the parent band RNG, seeded by the
+ * per-seed cache key. Each seed gets an independent stream.
  */
-function forkedRngFor(hueKey: number): PRNG {
-  // Mulberry32-style seed derivation, mixed from the shared band RNG.
+function forkedRngFor(key: number): PRNG {
   const base = Math.floor(currentBandRng() * 0x100000000)
-  let s = ((base ^ (hueKey * 0x9e3779b9)) >>> 0)
+  let s = ((base ^ (key * 0x9e3779b9)) >>> 0)
   s = Math.imul(s ^ (s >>> 16), 0x85ebca6b) >>> 0
   s = Math.imul(s ^ (s >>> 13), 0xc2b2ae35) >>> 0
   s = (s ^ (s >>> 16)) >>> 0
@@ -609,20 +739,25 @@ function forkedRngFor(hueKey: number): PRNG {
   }
 }
 
-function ensureSequence(hueKey: number, upTo: number): SequenceEntry {
-  let entry = sequenceCache.get(hueKey)
+function ensureSequence(hueKey: number, seedId: number, upTo: number): SequenceEntry {
+  const key = seedCacheKey(hueKey, seedId)
+  let entry = sequenceCache.get(key)
   if (!entry) {
     entry = {
       generator: new AgateBandGenerator(
         currentOptions,
-        forkedRngFor(hueKey),
+        forkedRngFor(key),
         isZonalLayout(hueKey),
         isOnyxLayout(hueKey),
-        isDyedSpecimen(hueKey)
+        isDyedSpecimen(hueKey),
+        isIrisLayout(hueKey),
+        getIrisPaletteIdx(hueKey, seedId, IRIS_PALETTES.length),
+        (cellHash(hueKey, 4447) * DYE_HUES.length) | 0,
+        cellHash(hueKey, 1013)
       ),
       sequence: [],
     }
-    sequenceCache.set(hueKey, entry)
+    sequenceCache.set(key, entry)
   }
   if (entry.sequence.length > upTo) return entry
   const target = Math.min(upTo + 1, MAX_CACHED_BANDS)
@@ -640,11 +775,12 @@ export const agateExperimental: BandColorStrategy = {
   getBandColor(
     bandIdx: number,
     hueKey: number,
+    seedId: number,
     _baseLightness: number,
     _saturation: number
   ): BandColor {
     const idx = Math.min(bandIdx, MAX_CACHED_BANDS - 1)
-    const entry = ensureSequence(hueKey, idx)
+    const entry = ensureSequence(hueKey, seedId, idx)
     return entry.sequence[idx]
   },
 

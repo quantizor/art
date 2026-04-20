@@ -16,7 +16,7 @@
  * precomputed LUTs for trig and gamma to minimize per-pixel cost.
  */
 
-import type { ColorParams, CrystalProfile, RGBColor } from '../types'
+import type { ColorParams, CrystalProfile } from '../types'
 import { getStrategy, type BandColor, type BandColorStrategy } from './color-strategy'
 import { profile as agateProfile } from '../profiles'
 import { configureAgateExperimental, setBandRng } from './agate-experimental'
@@ -107,10 +107,6 @@ export function setVariantOverride(v: VariantPreset): void {
   variantOverride = v
 }
 
-export function getVariantOverride(): VariantPreset {
-  return variantOverride
-}
-
 export function isZonalLayout(hueKey: number): boolean {
   if (variantOverride === 'zonal') return true
   if (variantOverride !== 'random') return false
@@ -127,6 +123,19 @@ export function isDyedSpecimen(hueKey: number): boolean {
   if (variantOverride === 'dyed') return true
   if (variantOverride !== 'random') return false
   return cellHash(hueKey, 2749) < 0.05
+}
+
+export function isIrisLayout(hueKey: number): boolean {
+  if (variantOverride === 'iris') return true
+  if (variantOverride !== 'random') return false
+  return cellHash(hueKey, 3607) < 0.15
+}
+
+/** Stable 0..N-1 palette index for an iris seed. Indexed by both
+ *  hueKey and seedId so each nodule in an iris specimen picks its own
+ *  pride palette (two-nodule iris pairs can show two different flags). */
+export function getIrisPaletteIdx(hueKey: number, seedId: number, paletteCount: number): number {
+  return (cellHash(hueKey, seedId + 8191) * paletteCount) | 0
 }
 
 /**
@@ -218,94 +227,11 @@ function findBandIndex(cumulative: Float64Array, absDist: number): number {
   return lo
 }
 
-// ─── Reusable output buffer ──────────────────────────────────
-// Avoids allocating an RGBColor object per pixel in the hot path.
-// Callers that need to persist the result must copy the values.
-
-/** Shared output buffer for computeColorDirect */
-const _rgb = { r: 0, g: 0, b: 0 }
-
 // ─── Core Functions ──────────────────────────────────────────
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
-/** Hermite smoothstep — C1-continuous interpolation in [0,1] */
-const smoothstep = (t: number): number => {
-  const x = t < 0 ? 0 : t > 1 ? 1 : t
-  return x * x * (3 - 2 * x)
-}
-
 // ─── OKLCH -> sRGB Conversion ──────────────────────────────────
-
-/** Linear sRGB -> sRGB gamma curve (exact, for non-hot paths) */
-function linearToSrgb(x: number): number {
-  if (x <= 0.0031308) return 12.92 * x
-  return 1.055 * Math.pow(x, 1 / 2.4) - 0.055
-}
-
-/**
- * Convert OKLCH to sRGB.
- *
- * @param L - Perceptual lightness (0-1)
- * @param C - Chroma (0 to ~0.37, gamut dependent)
- * @param H - Hue in degrees (0-360)
- */
-export function oklchToRgb(L: number, C: number, H: number): RGBColor {
-  const hRad = (H * Math.PI) / 180
-  const a = C * Math.cos(hRad)
-  const b = C * Math.sin(hRad)
-
-  const l_ = L + 0.3963377774 * a + 0.2158037573 * b
-  const m_ = L - 0.1055613458 * a - 0.0638541728 * b
-  const s_ = L - 0.0894841775 * a - 1.2914855480 * b
-
-  const l = l_ * l_ * l_
-  const m = m_ * m_ * m_
-  const s = s_ * s_ * s_
-
-  const rLin = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-  const gLin = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-  const bLin = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-
-  return {
-    r: clamp01(linearToSrgb(rLin)),
-    g: clamp01(linearToSrgb(gLin)),
-    b: clamp01(linearToSrgb(bLin)),
-  }
-}
-
-/**
- * Fast OKLCH to sRGB using integer-degree trig LUT and gamma LUT.
- * Writes result into the provided output array [r, g, b] in 0-1 range.
- * Used in hot paths where hue is already quantized to [0, 360).
- */
-function oklchToRgbFast(L: number, C: number, H: number, out: RGBColor): void {
-  // Quantize hue to integer degree for LUT lookup
-  let hIdx = H | 0
-  if (hIdx < 0) hIdx += 360
-  else if (hIdx >= 360) hIdx -= 360
-
-  const cosH = COS_DEG[hIdx]
-  const sinH = SIN_DEG[hIdx]
-  const a = C * cosH
-  const b = C * sinH
-
-  const l_ = L + 0.3963377774 * a + 0.2158037573 * b
-  const m_ = L - 0.1055613458 * a - 0.0638541728 * b
-  const s_ = L - 0.0894841775 * a - 1.2914855480 * b
-
-  const l = l_ * l_ * l_
-  const m = m_ * m_ * m_
-  const s = s_ * s_ * s_
-
-  const rLin = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-  const gLin = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-  const bLin = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-
-  out.r = clamp01(linearToSrgbFast(rLin))
-  out.g = clamp01(linearToSrgbFast(gLin))
-  out.b = clamp01(linearToSrgbFast(bLin))
-}
 
 export { cellHash, valueNoise } from './Noise'
 import { cellHash, valueNoise } from './Noise'
@@ -386,6 +312,7 @@ export function computeColorWallBased(
   params: ColorParams,
   seedOrientation: number,
   tiltData: SeedTiltData,
+  seedId: number,
   buf: Uint8Array,
   baseBuf: Uint8Array,
   offset: number,
@@ -440,7 +367,7 @@ export function computeColorWallBased(
   const cumulative = getBandCumulative(hueKey, baseWidth)
   const bandIdx = findBandIndex(cumulative, absDist)
 
-  const band = currentStrategy.getBandColor(bandIdx, hueKey, baseLightness, saturation)
+  const band = currentStrategy.getBandColor(bandIdx, hueKey, seedId, baseLightness, saturation)
   let H = band.H
   let L = band.L
   let C = band.C
@@ -492,7 +419,7 @@ export function computeColorWallBased(
   {
     const needsShell = bandIdx <= 1
     const shell = needsShell
-      ? currentStrategy.getBandColor(0, hueKey, baseLightness, saturation)
+      ? currentStrategy.getBandColor(0, hueKey, seedId, baseLightness, saturation)
       : null
     const shellIsDark = shell ? shell.L < 0.32 : false
     const bandStart = bandIdx > 0 ? cumulative[bandIdx - 1] : 0
@@ -527,35 +454,54 @@ export function computeColorWallBased(
     // the next light band (real-agate "post-Mn speckle"). Fires at the
     // rim contact (bandIdx=0, source=host rock) and at every dark→light
     // internal transition (bandIdx>=1, source=previous band).
+    // Grain strip is absolute-cells from the band boundary (not a
+    // fraction of band width) so the annulus doesn't bake deep into a
+    // fat zonal expanse. Density falls off with distance — densest
+    // near the shell, sparser tail spreading inward so tiny specks of
+    // residual material carry further into the light deposit.
+    const GRAIN_MAX_CELLS = 6.5
+    const cellsFromOuter = absDist - bandStart
     let sourceBand: BandColor | null = null
     let grainWindow = false
     if (bandIdx === 0) {
       if (shellIsDark) {
         sourceBand = shell
-        grainWindow = p > 0.05 && p < 0.35
+        grainWindow = cellsFromOuter > 0.6 && cellsFromOuter < GRAIN_MAX_CELLS
       }
     } else {
-      const prev = currentStrategy.getBandColor(bandIdx - 1, hueKey, baseLightness, saturation)
+      const prev = currentStrategy.getBandColor(bandIdx - 1, hueKey, seedId, baseLightness, saturation)
       if (prev.L < 0.32 && band.L > 0.55) {
         sourceBand = prev
-        grainWindow = p < 0.28
+        grainWindow = cellsFromOuter < GRAIN_MAX_CELLS
       }
     }
     if (sourceBand && grainWindow) {
-      const LAT = 8
+      // Density falloff: dense near the shell boundary, tapering out
+      // with distance. Keeps grain visually concentrated at the skin
+      // but lets rare tiny specks scatter into the fat zone.
+      const distRatio = cellsFromOuter / GRAIN_MAX_CELLS
+      const densityFactor = 1 - distRatio * 0.85
+      const LAT = 10
       const cx = Math.round(dx / LAT)
       const cy = Math.round(dy / LAT)
       const seedOff = bandIdx * 977
       const spawn = cellHash(cx * 239 + hueKey + seedOff, cy * 421 + seedOff)
-      if (spawn < 0.07) {
-        const jx = (cellHash(cx + seedOff, cy ^ 907) - 0.5) * LAT * 0.6
-        const jy = (cellHash(cx ^ 131, cy + seedOff) - 0.5) * LAT * 0.6
+      if (spawn < 0.055 * densityFactor) {
+        const jx = (cellHash(cx + seedOff, cy ^ 907) - 0.5) * LAT * 0.7
+        const jy = (cellHash(cx ^ 131, cy + seedOff) - 0.5) * LAT * 0.7
         const ddx = dx - (cx * LAT + jx)
         const ddy = dy - (cy * LAT + jy)
         const d2 = ddx * ddx + ddy * ddy
+        // Most stamps are tiny 1-2px dots — proper speckle rather than
+        // splats. A rare larger clump breaks monotony. Far from the
+        // shell, suppress clumps so the tail reads as pure specks.
+        const clumpRoll = cellHash(cx ^ (337 + seedOff), cy ^ 641)
+        const isClump = clumpRoll < 0.08 && distRatio < 0.45
         const sizeRoll = cellHash(cx ^ (557 + seedOff), cy ^ 283)
-        const rInner = 1.1 + sizeRoll * 0.8
-        const rOuter = rInner + 0.9
+        const rInner = isClump
+          ? 1.1 + sizeRoll * 0.6
+          : 0.35 + sizeRoll * 0.5
+        const rOuter = rInner + 0.5
         const d = Math.sqrt(d2)
         if (d < rOuter) {
           const t = d <= rInner ? 1 : 1 - (d - rInner) / (rOuter - rInner)
@@ -600,137 +546,6 @@ export function computeColorWallBased(
   g = g + sh * (1 - g)
   b = b + sh * (1 - b)
 
-  const rb = (r * 255) | 0
-  const gb = (g * 255) | 0
-  const bb = (b * 255) | 0
-  buf[offset] = rb
-  buf[offset + 1] = gb
-  buf[offset + 2] = bb
-  buf[offset + 3] = 255
-  baseBuf[offset] = rb
-  baseBuf[offset + 1] = gb
-  baseBuf[offset + 2] = bb
-  baseBuf[offset + 3] = 255
-}
-
-export function computeColorDirect(
-  dx: number,
-  dy: number,
-  params: ColorParams,
-  seedOrientation: number,
-  tiltData: SeedTiltData,
-  buf: Uint8Array,
-  baseBuf: Uint8Array,
-  offset: number
-): void {
-  const { growthPattern, bandWavelength, bandAmplitude, baseLightness, saturation, monoHue } = params
-
-  // ── Compute distFromSeed from dx/dy (fast — no sqrt needed for radial,
-  //    only need distance for band indexing, not direction) ──
-  // For band indexing we need the actual distance, so sqrt is required.
-  // However we cache dx*dx+dy*dy for the common case.
-  const dist2 = dx * dx + dy * dy
-  const distFromSeed = Math.sqrt(dist2)
-
-  // ── growthDistance inlined ──
-  let rawDist: number
-  if (growthPattern === 'linear') {
-    // Need angle only for linear projection — compute from dx/dy directly
-    const angle = Math.atan2(dy, dx)
-    rawDist = distFromSeed * Math.cos(angle - seedOrientation)
-  } else {
-    rawDist = distFromSeed
-  }
-
-  const bw = bandWavelength > 1 ? bandWavelength : 1
-  const pos = (rawDist < 0 ? -rawDist : rawDist) / bw
-  const gBandIdx = pos | 0 // fast floor for non-negative values
-  const frac = pos - gBandIdx
-
-  const orientKey = (seedOrientation * 100 + 0.5) | 0
-  const jitter0 = (cellHash(gBandIdx, orientKey) - 0.5) * bw * 0.3
-  const jitter1 = (cellHash(gBandIdx + 1, orientKey) - 0.5) * bw * 0.3
-  const sfrac = frac < 0 ? 0 : frac > 1 ? 1 : frac
-  const dist = rawDist + jitter0 + (jitter1 - jitter0) * sfrac * sfrac * (3 - 2 * sfrac)
-
-  // ── fBM warp ──
-  // Rotate (dx,dy) into the seed's local crystal-axis frame and apply
-  // the per-seed noise offset so each seed samples a unique region of
-  // the fBM field aligned with its own primary axis. Without this every
-  // seed grows an identical warp pattern translated to its center.
-  const cosA = tiltData.cosOrient
-  const sinA = tiltData.sinOrient
-  const rdx = dx * cosA - dy * sinA
-  const rdy = dx * sinA + dy * cosA
-  const ns = currentProfile.bandNoiseScale
-  let nx = rdx * ns + tiltData.noiseOffsetX
-  let ny = rdy * ns + tiltData.noiseOffsetY
-  // Inline fBM with lacunarity=2, H from profile => pwHL = 2^-H (precomputed)
-  const pwHL = bandPwHL
-  const octaves = currentProfile.bandOctaves
-  let warp = 0
-  let amp = 1.0
-  for (let oi = 0; oi < octaves; oi++) {
-    warp += amp * (valueNoise(nx, ny) - 0.5)
-    amp *= pwHL
-    nx *= 2
-    ny *= 2
-  }
-  // Fade warp in from center so inner bands stay cleanly concentric
-  const fadeDist = bandWavelength * currentProfile.bandCenterFadeMultiplier
-  const centerFade = distFromSeed < fadeDist
-    ? distFromSeed / fadeDist : 1
-  const warpedDist = dist + warp * bandWavelength * currentProfile.bandWarpStrength * centerFade
-
-  // ── Band lookup (binary search) ──
-  const hueKey = (monoHue + 0.5) | 0
-  const absDist = warpedDist < 0 ? -warpedDist : warpedDist
-  const baseWidth = bandWavelength * (0.3 + bandAmplitude * 0.7)
-  const cumulative = getBandCumulative(hueKey, baseWidth)
-  const bandIdx = findBandIndex(cumulative, absDist)
-
-  // ── Per-band color (delegated to active strategy) ──
-  const band = currentStrategy.getBandColor(bandIdx, hueKey, baseLightness, saturation)
-  const H = band.H
-  const L = band.L
-  const C = band.C
-
-  // ── Fast OKLCH -> sRGB (LUT trig + LUT gamma) ──
-  let hIdx = H | 0
-  if (hIdx < 0) hIdx += 360
-  else if (hIdx >= 360) hIdx -= 360
-
-  const cosH = COS_DEG[hIdx]
-  const sinH = SIN_DEG[hIdx]
-  const oa = C * cosH
-  const ob = C * sinH
-
-  const l_ = L + 0.3963377774 * oa + 0.2158037573 * ob
-  const m_ = L - 0.1055613458 * oa - 0.0638541728 * ob
-  const s_ = L - 0.0894841775 * oa - 1.2914855480 * ob
-
-  const lc = l_ * l_ * l_
-  const mc = m_ * m_ * m_
-  const sc = s_ * s_ * s_
-
-  let r = clamp01(linearToSrgbFast(+4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc))
-  let g = clamp01(linearToSrgbFast(-1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc))
-  let b = clamp01(linearToSrgbFast(-0.0041960863 * lc - 0.7034186147 * mc + 1.7076147010 * sc))
-
-  // ── Tilt desaturation (precomputed per-seed) ──
-  const { grainBrightness, colorRetention } = tiltData
-  const grayLevel = (r * 0.2126 + g * 0.7152 + b * 0.0722) * grainBrightness
-  r = clamp01(grayLevel + (r * grainBrightness - grayLevel) * colorRetention)
-  g = clamp01(grayLevel + (g * grainBrightness - grayLevel) * colorRetention)
-  b = clamp01(grayLevel + (b * grainBrightness - grayLevel) * colorRetention)
-
-  // ── Sheen (screen blend) ──
-  const sh = currentProfile.sheen
-  r = r + sh * (1 - r)
-  g = g + sh * (1 - g)
-  b = b + sh * (1 - b)
-
-  // ── Write RGBA bytes to both display and base texture ──
   const rb = (r * 255) | 0
   const gb = (g * 255) | 0
   const bb = (b * 255) | 0

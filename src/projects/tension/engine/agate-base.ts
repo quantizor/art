@@ -19,6 +19,7 @@ export const agateBase: BandColorStrategy = {
   getBandColor(
     bandIdx: number,
     hueKey: number,
+    _seedId: number,
     baseLightness: number,
     saturation: number
   ): BandColor {

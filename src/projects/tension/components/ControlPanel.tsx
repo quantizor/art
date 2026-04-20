@@ -12,16 +12,14 @@ import { Slider } from '~/ui/Slider'
 import { Select } from '~/ui/Select'
 import { Tooltip } from '~/ui/Tooltip'
 import { MAX_SEED_COUNT } from '../constants'
-import type { SimulationParams, ColorParams, SimulationPhase, GrowthPattern } from '../types'
+import type { SimulationParams, SimulationPhase } from '../types'
 import type { VariantPreset } from '../engine/ColorMapper'
 
 interface ControlPanelProps {
   phase: SimulationPhase
   particleCount: number
   simParams: SimulationParams
-  colorParams: ColorParams
   onSimParamsChange: (params: SimulationParams) => void
-  onColorParamsChange: (params: ColorParams) => void
   variant: VariantPreset
   onVariantChange: (v: VariantPreset) => void
   onReset: () => void
@@ -33,9 +31,7 @@ export function ControlPanel({
   phase,
   particleCount,
   simParams,
-  colorParams,
   onSimParamsChange,
-  onColorParamsChange,
   variant,
   onVariantChange,
   onReset,
@@ -148,18 +144,6 @@ export function ControlPanel({
               <option value="iris">Iris (pride)</option>
               <option value="dyed">Dyed</option>
             </Select>
-            <Select
-              label="Pattern"
-              size="sm"
-              value={colorParams.growthPattern}
-              onChange={(e) =>
-                onColorParamsChange({ ...colorParams, growthPattern: e.target.value as GrowthPattern })
-              }
-            >
-              <option value="linear">Linear</option>
-              <option value="radial">Radial</option>
-            </Select>
-
             <Button variant="danger" size="sm" onClick={onReset} className="w-full">
               Reset
             </Button>

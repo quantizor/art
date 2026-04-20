@@ -21,10 +21,16 @@ export interface BandColor {
 export interface BandColorStrategy {
   name: string
 
-  /** Return the OKLCH color for a given band index */
+  /**
+   * Return the OKLCH color for a given band index.
+   * `hueKey` identifies the specimen (layout decisions share this key);
+   * `seedId` distinguishes seeds within the specimen so each seed rolls
+   * its own shell + regime + family sequence independently.
+   */
   getBandColor(
     bandIdx: number,
     hueKey: number,
+    seedId: number,
     baseLightness: number,
     saturation: number
   ): BandColor

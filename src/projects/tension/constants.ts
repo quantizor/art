@@ -66,7 +66,6 @@ export const DEFAULT_SIM_PARAMS: SimulationParams = {
 
 /** Default color parameters */
 export const DEFAULT_COLOR_PARAMS: ColorParams = {
-  growthPattern: 'radial',
   bandWavelength: 14,
   bandAmplitude: 0.35,
   baseLightness: 0.55,

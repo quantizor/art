@@ -1,1 +1,0 @@
-import{j as e}from"./main-DY9Ax-EN.js";function s(){return e.jsxs("div",{children:["Select a user or"," ",e.jsx("a",{href:"/api/users",className:"text-blue-800 hover:text-blue-600 underline",children:"view as JSON"})]})}export{s as component};

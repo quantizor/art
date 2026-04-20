@@ -91,3 +91,64 @@ export function maxWallDist(dist: Uint16Array): number {
   }
   return max
 }
+
+/**
+ * Per-cell "within `radius` cells of an inter-seed Voronoi boundary"
+ * mask. Adjacent nodules in nature have actual host rock between them,
+ * so we render a dark crust along their shared boundary regardless of
+ * whether the specimen's palette rolled a Mn shell — otherwise the
+ * edge where two light-chalcedony cavities meet would merge invisibly.
+ *
+ * Distinct from computeWallDistance (which unifies host-rock and inter-
+ * seed walls into one "wall" concept). Here only DIFFERENT non-zero
+ * seedId neighbours count; host-rock edges are left alone.
+ */
+export function computeInterSeedMask(
+  gridData: Uint16Array,
+  W: number,
+  H: number,
+  radius: number
+): Uint8Array {
+  const N = W * H
+  const mask = new Uint8Array(N)
+
+  // Seed mask: cells with a different-seed 4-neighbour.
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const idx = y * W + x
+      const s = gridData[idx]
+      if (s === 0) continue
+      if (
+        (x > 0 && gridData[idx - 1] > 0 && gridData[idx - 1] !== s) ||
+        (x < W - 1 && gridData[idx + 1] > 0 && gridData[idx + 1] !== s) ||
+        (y > 0 && gridData[idx - W] > 0 && gridData[idx - W] !== s) ||
+        (y < H - 1 && gridData[idx + W] > 0 && gridData[idx + W] !== s)
+      ) {
+        mask[idx] = 1
+      }
+    }
+  }
+
+  // Dilate `radius` times into same-cavity cells, using value 2 as a
+  // next-pass sentinel so the dilation doesn't propagate through itself
+  // within one pass.
+  for (let r = 0; r < radius; r++) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = y * W + x
+        if (gridData[idx] === 0 || mask[idx]) continue
+        if (
+          (x > 0 && mask[idx - 1] === 1) ||
+          (x < W - 1 && mask[idx + 1] === 1) ||
+          (y > 0 && mask[idx - W] === 1) ||
+          (y < H - 1 && mask[idx + W] === 1)
+        ) {
+          mask[idx] = 2
+        }
+      }
+    }
+    for (let i = 0; i < N; i++) if (mask[i] === 2) mask[i] = 1
+  }
+
+  return mask
+}

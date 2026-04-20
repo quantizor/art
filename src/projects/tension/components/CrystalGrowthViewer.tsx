@@ -34,6 +34,31 @@ import {
 } from '../constants'
 import type { CrystalProfile, SimulationParams, ColorParams, SimulationPhase } from '../types'
 
+const STORAGE_KEYS = {
+  variant: 'tension:variant',
+} as const
+
+function loadPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const v = window.localStorage.getItem(key)
+    return v && (allowed as readonly string[]).includes(v) ? (v as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function savePref(key: string, value: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // localStorage blocked or full — silently no-op, preference just won't persist
+  }
+}
+
+const VARIANT_OPTIONS = ['random', 'iris', 'onyx', 'zonal', 'dyed'] as const satisfies readonly VariantPreset[]
+
 /** Generate randomized color params from a crystal profile */
 function randomParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.random): ColorParams {
   const [wlMin, wlMax] = profile.bandWavelengthRange
@@ -41,7 +66,6 @@ function randomParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.rando
   const [lMin, lMax] = profile.baseLightnessRange
   const [sMin, sMax] = profile.saturationRange
   return {
-    growthPattern: profile.growthPattern,
     bandWavelength: Math.round(wlMin + rng() * (wlMax - wlMin)),
     bandAmplitude: ampMin + rng() * (ampMax - ampMin),
     baseLightness: lMin + rng() * (lMax - lMin),
@@ -96,7 +120,11 @@ export function CrystalGrowthViewer() {
     const colorRng = forkDomain(masterSeed, DOMAIN.COLOR_PARAMS)
     return randomParamsFromProfile(agateProfile, colorRng)
   })
-  const [variant, setVariant] = useState<VariantPreset>('random')
+  const [variant, setVariant] = useState<VariantPreset>(
+    () => loadPref<VariantPreset>(STORAGE_KEYS.variant, 'random', VARIANT_OPTIONS)
+  )
+
+  useEffect(() => { savePref(STORAGE_KEYS.variant, variant) }, [variant])
 
   // Stable refs for animation loop
   const phaseRef = useRef(phase)
@@ -219,7 +247,7 @@ export function CrystalGrowthViewer() {
         const progress = Math.min(1, elapsed / DURATION)
         const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
         // Sparkle count scales with converted-region size.
-        const sparkleCount = 1500 + ((progress * 5500) | 0)
+        const sparkleCount = 150 + ((progress * 900) | 0)
         crystalRenderer.drawParticleDissolve(progress, sparkleCount, pulse)
         if (elapsed >= DURATION) {
           dissolvePhaseStartRef.current = 0
@@ -462,9 +490,7 @@ export function CrystalGrowthViewer() {
           phase={phase}
           particleCount={particleCount}
           simParams={simParams}
-          colorParams={colorParams}
           onSimParamsChange={setSimParams}
-          onColorParamsChange={setColorParams}
           variant={variant}
           onVariantChange={setVariant}
           onReset={handleReset}

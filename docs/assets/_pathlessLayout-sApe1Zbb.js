@@ -1,1 +1,0 @@
-import{j as s,O as e}from"./main-DY9Ax-EN.js";function t(){return s.jsxs("div",{className:"p-2",children:[s.jsx("div",{className:"border-b",children:"I'm a layout"}),s.jsx("div",{children:s.jsx(e,{})})]})}export{t as component};

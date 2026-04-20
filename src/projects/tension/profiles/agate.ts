@@ -19,7 +19,6 @@ export const agateProfile: CrystalProfile = {
   maxGrainArea: 0.35,
 
   // Band structure (ColorMapper)
-  growthPattern: 'radial',
   bandNoiseScale: 0.035,
   bandOctaves: 3,
   bandH: 0.7,
