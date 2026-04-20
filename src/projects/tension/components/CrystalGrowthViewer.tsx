@@ -302,7 +302,7 @@ export function CrystalGrowthViewer() {
       seeds.slice(),
       GRID_WIDTH,
       GRID_HEIGHT,
-      agateProfile.growthNoiseScale * 0.22,
+      agateProfile.growthNoiseScale * 0.045,
       0.065
     )
     sim.getGrid().data.set(gridData)

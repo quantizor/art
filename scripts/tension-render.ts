@@ -183,7 +183,7 @@ async function main() {
   // active experiment only changes how non-cavity pixels are painted.
   const { gridData } = partitionCavities(
     seeds, W, H,
-    agateProfile.growthNoiseScale * 0.22,
+    agateProfile.growthNoiseScale * 0.045,
     0.065
   )
   const wallDist = computeWallDistance(gridData, W, H)
