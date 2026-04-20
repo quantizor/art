@@ -183,8 +183,16 @@ export function CrystalGrowthViewer() {
   const fpsFramesRef = useRef(0)
   const fpsTimeRef = useRef(0)
 
-  // Seed-based deterministic PRNG — the seed string fully determines the design
-  const [seedString, setSeedString] = useState(() => randomSeedString())
+  // Seed-based deterministic PRNG — the seed string fully determines the design.
+  // Dev honours `?seed=xyz` in the URL so a code change can be replayed against
+  // the exact same generation for rigorous A/B evaluation.
+  const [seedString, setSeedString] = useState(() => {
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      const q = new URLSearchParams(window.location.search).get('seed')
+      if (q) return q
+    }
+    return randomSeedString()
+  })
   const seedStringRef = useRef(seedString)
   seedStringRef.current = seedString
 
@@ -581,8 +589,7 @@ export function CrystalGrowthViewer() {
     restartLoop()
   }, [initSeeds, restartLoop])
 
-  const handleRandomize = useCallback(() => {
-    const newSeed = randomSeedString()
+  const regenerateWithSeed = useCallback((newSeed: string) => {
     setSeedString(newSeed)
     const masterSeed = decodeSeed(newSeed)
 
@@ -599,6 +606,62 @@ export function CrystalGrowthViewer() {
     }))
     setColorParams(randomParamsFromProfile(agateProfile, colorRng))
   }, [])
+
+  const handleRandomize = useCallback(() => {
+    regenerateWithSeed(randomSeedString())
+  }, [regenerateWithSeed])
+
+  // Dev-only imperative handles so an external driver (preview_eval, a
+  // remote agent iterating on shading code) can run generations and
+  // poll for completion without a human in the loop.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const w = window as unknown as {
+      __tensionRandomize?: () => void
+      __tensionSetSeed?: (s: string) => void
+      __tensionSeed?: string
+      __tensionLastRevealAt?: number | null
+      __tensionPumpToComplete?: (maxFrames?: number, fps?: number) =>
+        Promise<{ done: boolean; frames?: number; phase?: SimulationPhase }>
+    }
+    w.__tensionRandomize = () => handleRandomize()
+    w.__tensionSetSeed = (s: string) => regenerateWithSeed(s)
+    w.__tensionSeed = seedStringRef.current
+    w.__tensionLastRevealAt = null
+    // Manual frame pump — used when the tab is backgrounded (hidden
+    // iframe, automation) and RAF is throttled. Cancels any RAF the
+    // animate fn re-schedules so we're the sole driver.
+    w.__tensionPumpToComplete = async (maxFrames = 8000, fps = 60) => {
+      const fn = animateRef.current
+      if (!fn) return { done: false, phase: 'idle' as SimulationPhase }
+      const step = 1000 / fps
+      let t = performance.now()
+      for (let i = 0; i < maxFrames; i++) {
+        if (phaseRef.current === 'complete') return { done: true, frames: i }
+        t += step
+        fn(t)
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        // Yield every 32 frames so async work (runPartition worker
+        // response) can resolve between batches.
+        if ((i & 31) === 0) await new Promise((r) => setTimeout(r, 0))
+      }
+      return { done: false, phase: phaseRef.current }
+    }
+    const onComplete = () => {
+      w.__tensionSeed = seedStringRef.current
+      w.__tensionLastRevealAt = Date.now()
+      // eslint-disable-next-line no-console
+      console.log(`[tension] reveal complete · seed=${seedStringRef.current}`)
+    }
+    window.addEventListener('tension:reveal-complete', onComplete)
+    return () => {
+      window.removeEventListener('tension:reveal-complete', onComplete)
+      delete w.__tensionRandomize
+      delete w.__tensionSetSeed
+      delete w.__tensionSeed
+      delete w.__tensionLastRevealAt
+    }
+  }, [handleRandomize, regenerateWithSeed])
 
   const handleSave = useCallback(() => {
     const canvas = canvasRef.current
