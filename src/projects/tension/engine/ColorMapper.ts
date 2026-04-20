@@ -420,18 +420,16 @@ export function computeColorWallBased(
   const sinA = tiltData.sinOrient
   const rdx = dx * cosA - dy * sinA
   const rdy = dx * sinA + dy * cosA
-  // fBM band warp. Baseline uses the profile defaults verbatim (0.035
-  // scale × 3 octaves × 1.0 warp strength) so A reflects the original
-  // generator. Experimental path stacks three wobble tunings that
-  // reference photos suggest produce more agate-like bands:
-  //   • noise scale × 0.28  — longer wavelength (~6 waves per revolution)
-  //   • 2 octaves           — drop the ~7-cell sub-band chatter
-  //   • warp strength × 1.25 — restore visible peak after octave drop
-  const ns = currentProfile.bandNoiseScale * (experimental ? 0.28 : 1.0)
+  // fBM band warp — tuned against reference agate photos to produce
+  // ~6 large waves per revolution instead of ~32 fine ripples.
+  //   • noise scale × 0.28  — longer wavelength
+  //   • 2 octaves           — no sub-band chatter
+  //   • warp strength × 1.25 — visible peak displacement
+  const ns = currentProfile.bandNoiseScale * 0.28
   let nx = rdx * ns + tiltData.noiseOffsetX
   let ny = rdy * ns + tiltData.noiseOffsetY
   const pwHL = bandPwHL
-  const octaves = experimental ? 2 : currentProfile.bandOctaves
+  const octaves = 2
   let warp = 0
   let amp = 1.0
   for (let oi = 0; oi < octaves; oi++) {
@@ -445,8 +443,7 @@ export function computeColorWallBased(
   const fadeDist = bandWavelength * currentProfile.bandCenterFadeMultiplier
   const fadeDist2 = fadeDist * fadeDist
   const centerFade = dist2FromSeed < fadeDist2 ? Math.sqrt(dist2FromSeed) / fadeDist : 1
-  const warpStrengthMul = experimental ? 1.25 : 1.0
-  const warpedDist = dist + warp * bandWavelength * currentProfile.bandWarpStrength * warpStrengthMul * centerFade
+  const warpedDist = dist + warp * bandWavelength * currentProfile.bandWarpStrength * 1.25 * centerFade
 
   const hueKey = (monoHue + 0.5) | 0
   const absDist = warpedDist < 0 ? -warpedDist : warpedDist

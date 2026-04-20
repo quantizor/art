@@ -178,14 +178,13 @@ async function main() {
     buildSeed(masterSeed, i, p.x, p.y, sim.axisCount, agateProfile)
   )
 
-  // Dual partition — A at baseline cavity-outline noise, B at the
-  // current-experimental value. Each side gets its own gridData,
-  // wallDist, septum mask, and per-seed max wall distance so cavity
-  // geometry can vary between A and B as part of the active A/B
-  // candidate. Parity mode collapses both to baseline for validation.
-  const partitionScaleA = agateProfile.growthNoiseScale * 0.22       // baseline: ~32 frills per cavity
-  const partitionScaleB = values.parity ? partitionScaleA
-                                        : agateProfile.growthNoiseScale * 0.045 // experiment: ~6 gentle dips
+  // Dual partition scaffold — A at baseline, B at the current geometry
+  // experiment (if any). Today both sides use the same scale; the next
+  // cavity-shape experiment just overrides partitionScaleB. Each side
+  // keeps its own gridData / wallDist / septum / per-seed max so a
+  // geometry swap doesn't need any loop rewiring.
+  const partitionScaleA = agateProfile.growthNoiseScale * 0.045
+  const partitionScaleB = partitionScaleA // ← next geometry experiment lands here
   const { gridData: gridA } = partitionCavities(seeds, W, H, partitionScaleA, 0.065)
   const { gridData: gridB } = partitionCavities(seeds, W, H, partitionScaleB, 0.065)
   const wallDistA = computeWallDistance(gridA, W, H)
@@ -216,7 +215,9 @@ async function main() {
   const rgbaA = new Uint8Array(W * H * 4)
   const rgbaB = new Uint8Array(W * H * 4)
 
-  // A loop — baseline shading + baseline partition.
+  const experimentalOn = !values.parity
+
+  // A loop — baseline shading, baseline partition.
   for (let i = 0; i < gridA.length; i++) {
     const seedId = gridA[i]
     const off = i * 4
@@ -239,8 +240,7 @@ async function main() {
     }
   }
 
-  // B loop — experimental shading (if --parity off) + experimental partition.
-  const experimentalOn = !values.parity
+  // B loop — experimental shading + experimental partition.
   for (let i = 0; i < gridB.length; i++) {
     const seedId = gridB[i]
     const off = i * 4

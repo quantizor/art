@@ -89,10 +89,12 @@ function randomSimParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.ra
 
 
 /**
- * Dev-only draggable vertical divider over the canvas. Left of the line
- * shows classic shading, right shows enhanced. The actual wipe is
- * applied in the renderer; this component only emits the normalized
- * split position (0..1) via pointer events.
+ * Dev-only draggable vertical divider over the canvas. Left of the
+ * line shows A (baseline), right shows B (current experimental
+ * candidate). The actual wipe is applied in the renderer; this
+ * component only emits the normalized split position (0..1). Styled
+ * to match the ControlPanel aesthetic — brutalist monospace, sharp
+ * edges, mix-blend-difference so it reads over any band colour.
  */
 function OnionSkinHandle({
   value,
@@ -133,21 +135,14 @@ function OnionSkinHandle({
     <div
       ref={ref}
       className="absolute inset-0 pointer-events-none select-none"
-      aria-label="Onion-skin comparison handle"
+      aria-label="A/B comparison handle"
     >
-      {/* Vertical divider line */}
+      {/* Vertical divider — thin line that reads on any band colour. */}
       <div
-        className="absolute top-0 bottom-0 w-px bg-white/80 mix-blend-difference pointer-events-none"
+        className="absolute top-0 bottom-0 w-px bg-white mix-blend-difference pointer-events-none"
         style={{ left: pct, transform: 'translateX(-0.5px)' }}
       />
-      {/* Endpoint labels */}
-      <div className="absolute top-4 left-4 text-[10px] uppercase tracking-widest font-mono text-white/70 mix-blend-difference pointer-events-none">
-        ← classic
-      </div>
-      <div className="absolute top-4 right-4 text-[10px] uppercase tracking-widest font-mono text-white/70 mix-blend-difference pointer-events-none">
-        enhanced →
-      </div>
-      {/* Drag hit area — wider than the visible line so it's easy to grab */}
+      {/* Drag hit area — 24 px wide strip centred on the line. */}
       <div
         className="absolute top-0 bottom-0 w-6 cursor-ew-resize pointer-events-auto"
         style={{ left: pct, transform: 'translateX(-50%)' }}
@@ -156,12 +151,15 @@ function OnionSkinHandle({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
-        {/* Grip circle */}
+        {/* Grip — matches ControlPanel aesthetic: black fill, default
+            border, monospace micro-label. A and B letters flank the
+            divider so orientation is explicit without side labels. */}
         <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 border border-black/30 shadow-lg flex items-center justify-center text-black text-xs"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/80 border border-[var(--color-border-default)] text-white/80 hover:text-white text-[10px] uppercase tracking-widest font-mono flex items-center"
           aria-hidden
         >
-          ‹›
+          <span className="px-2 py-1 border-r border-[var(--color-border-default)]">A</span>
+          <span className="px-2 py-1">B</span>
         </div>
       </div>
     </div>
@@ -302,7 +300,7 @@ export function CrystalGrowthViewer() {
       seeds.slice(),
       GRID_WIDTH,
       GRID_HEIGHT,
-      agateProfile.growthNoiseScale * 0.22,
+      agateProfile.growthNoiseScale * 0.045,
       0.065
     )
     sim.getGrid().data.set(gridData)
