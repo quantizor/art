@@ -147,8 +147,6 @@ async function main() {
       outdir:  { type: 'string', default: '/tmp/tension-iter' },
       width:   { type: 'string', default: '1600' },
       height:  { type: 'string', default: '900' },
-      cropW:   { type: 'string', default: '800' },
-      cropH:   { type: 'string', default: '300' },
       /** Parity mode: run BOTH passes with enhancedShading=false.
        *  Expected: identical bytes → mean/peak delta 0. Any non-zero
        *  means the classic path has picked up a hidden side effect. */
@@ -273,45 +271,44 @@ async function main() {
     return out
   }
 
-  /** Stack A / B / diff vertically from the same source rectangle. */
-  const makeStrip = (sx: number, sy: number, cw: number, ch: number): Uint8Array => {
-    const strip = new Uint8Array(cw * ch * 3 * 4)
-    strip.set(cropRegion(outA, sx, sy, cw, ch), 0)
-    strip.set(cropRegion(outB, sx, sy, cw, ch), cw * ch * 4)
-    strip.set(cropRegion(diff, sx, sy, cw, ch), cw * ch * 4 * 2)
-    return strip
-  }
-
   mkdirSync(values.outdir!, { recursive: true })
   writeFileSync(join(values.outdir!, `${values.label}-a.png`),    encodePng(W, H, outA))
   writeFileSync(join(values.outdir!, `${values.label}-b.png`),    encodePng(W, H, outB))
   writeFileSync(join(values.outdir!, `${values.label}-diff.png`), encodePng(W, H, diff))
 
-  // Native-resolution 1:1 strips covering multiple regions of the
-  // specimen. Each strip is ≤ ~1024 px wide so the vision encoder
-  // doesn't downsample. cropH is per-region height (strip becomes 3×).
-  const cropW = Math.min(W, Number(values.cropW))
-  const cropH = Math.min(H, Number(values.cropH))
-  const cx = ((W - cropW) / 2) | 0
-  const cy = ((H - cropH) / 2) | 0
-  // Centre — fortification / band detail through the core.
-  writeFileSync(
-    join(values.outdir!, `${values.label}-strip-center.png`),
-    encodePng(cropW, cropH * 3, makeStrip(cx, cy, cropW, cropH))
-  )
-  // Rim — outer shell / host-rock contact + rim-contamination grains.
-  const rimY = Math.max(0, Math.floor(H * 0.08))
-  writeFileSync(
-    join(values.outdir!, `${values.label}-strip-rim.png`),
-    encodePng(cropW, cropH * 3, makeStrip(cx, rimY, cropW, cropH))
-  )
-  // NW quadrant — off-axis behaviour + seed septum if multi-seed.
-  const quadX = Math.max(0, Math.floor(W * 0.10))
-  const quadY = Math.max(0, Math.floor(H * 0.15))
-  writeFileSync(
-    join(values.outdir!, `${values.label}-strip-nw.png`),
-    encodePng(cropW, cropH * 3, makeStrip(quadX, quadY, cropW, cropH))
-  )
+  // Full-coverage tiles at native 1:1 resolution. Vision encoders
+  // downsample images above ~1024 px on the long side, which erases
+  // fine band detail during diagnostic reads. Each tile is sized so
+  // every pixel of the specimen can be inspected 1:1 across a small
+  // number of files. Default tile is a quadrant (≤ W/2 × H/2 px).
+  const TILE_W = Math.min(W, Math.ceil(W / 2))
+  const TILE_H = Math.min(H, Math.ceil(H / 2))
+  const tileCols = Math.ceil(W / TILE_W)
+  const tileRows = Math.ceil(H / TILE_H)
+  const cardinal = (col: number, row: number): string => {
+    const c = tileCols === 1 ? '' : col === 0 ? 'w' : 'e'
+    const r = tileRows === 1 ? '' : row === 0 ? 'n' : 's'
+    return `${r}${c}` || 'full'
+  }
+  const emitTiles = (buf: Uint8Array, pass: 'a' | 'b' | 'diff') => {
+    for (let row = 0; row < tileRows; row++) {
+      for (let col = 0; col < tileCols; col++) {
+        const sx = col * TILE_W
+        const sy = row * TILE_H
+        const cw = Math.min(TILE_W, W - sx)
+        const ch = Math.min(TILE_H, H - sy)
+        const tile = cropRegion(buf, sx, sy, cw, ch)
+        const region = cardinal(col, row)
+        writeFileSync(
+          join(values.outdir!, `${values.label}-${region}-${pass}.png`),
+          encodePng(cw, ch, tile)
+        )
+      }
+    }
+  }
+  emitTiles(outA, 'a')
+  emitTiles(outB, 'b')
+  emitTiles(diff, 'diff')
 
   const summary = {
     seed: seedString, variant, W, H,
