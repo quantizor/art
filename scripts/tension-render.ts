@@ -260,29 +260,58 @@ async function main() {
   const pixels = W * H
   const meanDelta = deltaSum / (pixels * 3)
 
-  // Centre-crop strip: A on top / B middle / diff bottom.
-  const cropW = Math.min(W, Number(values.cropW))
-  const cropH = Math.min(H, Number(values.cropH))
-  const startX = ((W - cropW) / 2) | 0
-  const startY = ((H - cropH) / 2) | 0
-  const stripH = cropH * 3
-  const strip = new Uint8Array(cropW * stripH * 4)
-  const cropFrom = (src: Uint8Array, destRowOffset: number) => {
-    for (let row = 0; row < cropH; row++) {
-      const srcRow = ((startY + row) * W + startX) * 4
-      const dstRow = (destRowOffset + row) * cropW * 4
-      strip.set(src.subarray(srcRow, srcRow + cropW * 4), dstRow)
+  /**
+   * Extract a native-resolution crop from a source buffer. Buffers are
+   * Y-flipped so origin (0,0) is top-left in render orientation.
+   */
+  const cropRegion = (src: Uint8Array, sx: number, sy: number, cw: number, ch: number): Uint8Array => {
+    const out = new Uint8Array(cw * ch * 4)
+    for (let row = 0; row < ch; row++) {
+      const srcRow = ((sy + row) * W + sx) * 4
+      out.set(src.subarray(srcRow, srcRow + cw * 4), row * cw * 4)
     }
+    return out
   }
-  cropFrom(outA, 0)
-  cropFrom(outB, cropH)
-  cropFrom(diff, cropH * 2)
+
+  /** Stack A / B / diff vertically from the same source rectangle. */
+  const makeStrip = (sx: number, sy: number, cw: number, ch: number): Uint8Array => {
+    const strip = new Uint8Array(cw * ch * 3 * 4)
+    strip.set(cropRegion(outA, sx, sy, cw, ch), 0)
+    strip.set(cropRegion(outB, sx, sy, cw, ch), cw * ch * 4)
+    strip.set(cropRegion(diff, sx, sy, cw, ch), cw * ch * 4 * 2)
+    return strip
+  }
 
   mkdirSync(values.outdir!, { recursive: true })
-  writeFileSync(join(values.outdir!, `${values.label}-a.png`),     encodePng(W, H, outA))
-  writeFileSync(join(values.outdir!, `${values.label}-b.png`),     encodePng(W, H, outB))
-  writeFileSync(join(values.outdir!, `${values.label}-diff.png`),  encodePng(W, H, diff))
-  writeFileSync(join(values.outdir!, `${values.label}-strip.png`), encodePng(cropW, stripH, strip))
+  writeFileSync(join(values.outdir!, `${values.label}-a.png`),    encodePng(W, H, outA))
+  writeFileSync(join(values.outdir!, `${values.label}-b.png`),    encodePng(W, H, outB))
+  writeFileSync(join(values.outdir!, `${values.label}-diff.png`), encodePng(W, H, diff))
+
+  // Native-resolution 1:1 strips covering multiple regions of the
+  // specimen. Each strip is ≤ ~1024 px wide so the vision encoder
+  // doesn't downsample. cropH is per-region height (strip becomes 3×).
+  const cropW = Math.min(W, Number(values.cropW))
+  const cropH = Math.min(H, Number(values.cropH))
+  const cx = ((W - cropW) / 2) | 0
+  const cy = ((H - cropH) / 2) | 0
+  // Centre — fortification / band detail through the core.
+  writeFileSync(
+    join(values.outdir!, `${values.label}-strip-center.png`),
+    encodePng(cropW, cropH * 3, makeStrip(cx, cy, cropW, cropH))
+  )
+  // Rim — outer shell / host-rock contact + rim-contamination grains.
+  const rimY = Math.max(0, Math.floor(H * 0.08))
+  writeFileSync(
+    join(values.outdir!, `${values.label}-strip-rim.png`),
+    encodePng(cropW, cropH * 3, makeStrip(cx, rimY, cropW, cropH))
+  )
+  // NW quadrant — off-axis behaviour + seed septum if multi-seed.
+  const quadX = Math.max(0, Math.floor(W * 0.10))
+  const quadY = Math.max(0, Math.floor(H * 0.15))
+  writeFileSync(
+    join(values.outdir!, `${values.label}-strip-nw.png`),
+    encodePng(cropW, cropH * 3, makeStrip(quadX, quadY, cropW, cropH))
+  )
 
   const summary = {
     seed: seedString, variant, W, H,
