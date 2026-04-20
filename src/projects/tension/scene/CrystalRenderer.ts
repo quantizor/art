@@ -74,7 +74,7 @@ export class CrystalRenderer {
    * panel's shading A/B slider can lerp between the two on the fly.
    * Null in production builds.
    */
-  private revealColorsEnhanced: Uint8Array | null = null
+  private revealColorsExperimental: Uint8Array | null = null
   /**
    * Onion-skin wipe position (0..1) in normalized grid X. Cells with
    * `cx / W < onionSplit` draw from the classic buffer; cells beyond
@@ -423,10 +423,10 @@ export class CrystalRenderer {
       this.revealColors.fill(0)
     }
     if (import.meta.env.DEV) {
-      if (!this.revealColorsEnhanced || this.revealColorsEnhanced.length !== N * 4) {
-        this.revealColorsEnhanced = new Uint8Array(N * 4)
+      if (!this.revealColorsExperimental || this.revealColorsExperimental.length !== N * 4) {
+        this.revealColorsExperimental = new Uint8Array(N * 4)
       } else {
-        this.revealColorsEnhanced.fill(0)
+        this.revealColorsExperimental.fill(0)
       }
     }
     this.precomputeIdx = 0
@@ -463,10 +463,10 @@ export class CrystalRenderer {
     const W = GRID_WIDTH
     const invScale = 1 / GRID_SCALE
     const N = grid.length
-    const rcEnh = this.revealColorsEnhanced
+    const rcExp = this.revealColorsExperimental
     // Each cell does 2× the work when the dev A/B buffer exists.
     // Halve the chunk so the caller's per-frame CPU budget holds.
-    const effectiveCount = rcEnh ? count >> 1 : count
+    const effectiveCount = rcExp ? count >> 1 : count
     const end = Math.min(this.precomputeIdx + effectiveCount, N)
     const septum = this.interSeedMask
     // Septum colour — warm very-dark (OKLCH-ish L≈0.13, C≈0.012, H≈25).
@@ -497,11 +497,11 @@ export class CrystalRenderer {
         colorParams, axis0, tilt, seedId,
         rc, rc, off, cavityMax, false
       )
-      if (rcEnh) {
+      if (rcExp) {
         computeColorWallBased(
           dx, dy, wallDistCells,
           colorParams, axis0, tilt, seedId,
-          rcEnh, rcEnh, off, cavityMax, true
+          rcExp, rcExp, off, cavityMax, true
         )
       }
       // Override inter-seed boundary cells with the host-rock septum.
@@ -512,11 +512,11 @@ export class CrystalRenderer {
         rc[off + 1] = SEPTUM_G
         rc[off + 2] = SEPTUM_B
         rc[off + 3] = 255
-        if (rcEnh) {
-          rcEnh[off] = SEPTUM_R
-          rcEnh[off + 1] = SEPTUM_G
-          rcEnh[off + 2] = SEPTUM_B
-          rcEnh[off + 3] = 255
+        if (rcExp) {
+          rcExp[off] = SEPTUM_R
+          rcExp[off + 1] = SEPTUM_G
+          rcExp[off + 2] = SEPTUM_B
+          rcExp[off + 3] = 255
         }
       }
     }
@@ -922,10 +922,10 @@ export class CrystalRenderer {
     const tex = this.textureData
     const base = this.baseTextureData
     const endCursor = Math.min(this.revealCursor + count, order.length)
-    const rcEnh = this.revealColorsEnhanced
+    const rcExp = this.revealColorsExperimental
     // Onion-skin split in absolute cell columns. Cells left of the
     // split read from classic, cells right read from enhanced.
-    const splitCx = rcEnh ? this.onionSplit * W : Infinity
+    const splitCx = rcExp ? this.onionSplit * W : Infinity
 
     for (let k = this.revealCursor; k < endCursor; k++) {
       const idx = order[k]
@@ -937,8 +937,8 @@ export class CrystalRenderer {
       const texY = H - 1 - cy
       const texOff = (texY * W + cx) * 4
       const srcOff = idx * 4
-      const useEnhanced = rcEnh && cx >= splitCx
-      const src = useEnhanced ? rcEnh : rc
+      const useEnhanced = rcExp && cx >= splitCx
+      const src = useEnhanced ? rcExp : rc
       const r = src[srcOff]
       const g = src[srcOff + 1]
       const b = src[srcOff + 2]
@@ -978,11 +978,11 @@ export class CrystalRenderer {
     const clamped = v < 0 ? 0 : v > 1 ? 1 : v
     if (clamped === this.onionSplit) return
     this.onionSplit = clamped
-    const rcEnh = this.revealColorsEnhanced
+    const rcExp = this.revealColorsExperimental
     const rc = this.revealColors
     const order = this.revealOrder
     const grid = this.gridData
-    if (!rcEnh || !rc || !order || !grid) return
+    if (!rcExp || !rc || !order || !grid) return
 
     const W = GRID_WIDTH
     const H = GRID_HEIGHT
@@ -999,7 +999,7 @@ export class CrystalRenderer {
       const texY = H - 1 - cy
       const texOff = (texY * W + cx) * 4
       const srcOff = idx * 4
-      const src = cx >= splitCx ? rcEnh : rc
+      const src = cx >= splitCx ? rcExp : rc
       tex[texOff] = src[srcOff]
       tex[texOff + 1] = src[srcOff + 1]
       tex[texOff + 2] = src[srcOff + 2]
@@ -1023,10 +1023,10 @@ export class CrystalRenderer {
    */
   async exportShadingPair(): Promise<{ classic: string; enhanced: string } | null> {
     const rc = this.revealColors
-    const rcEnh = this.revealColorsEnhanced
+    const rcExp = this.revealColorsExperimental
     const order = this.revealOrder
     const grid = this.gridData
-    if (!rc || !rcEnh || !order || !grid) return null
+    if (!rc || !rcExp || !order || !grid) return null
 
     const W = GRID_WIDTH
     const H = GRID_HEIGHT
@@ -1075,7 +1075,7 @@ export class CrystalRenderer {
 
     return {
       classic: await toPng(buildImage(rc)),
-      enhanced: await toPng(buildImage(rcEnh)),
+      enhanced: await toPng(buildImage(rcExp)),
     }
   }
 

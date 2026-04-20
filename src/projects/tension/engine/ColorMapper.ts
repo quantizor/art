@@ -392,10 +392,12 @@ export function computeColorWallBased(
   /** Per-cavity max wall distance (cells). Used to drive the central
    *  druse trigger when this cell is in the deepest 15% of the cavity. */
   cavityMaxWallDist = 0,
-  /** Dev-only A/B toggle. When true, applies intra-band radial
-   *  translucency gradient + soft band-boundary lerp for a less
-   *  "cartoony" look. Classic mode (false) preserves existing output. */
-  enhancedShading = false
+  /** Dev-only A/B toggle. When false → current approved baseline
+   *  (all previously-accepted experiments inlined). When true →
+   *  baseline plus the CURRENT candidate experiment under evaluation.
+   *  As experiments are approved they're inlined into the baseline
+   *  and only the next candidate remains behind this flag. */
+  experimental = false
 ): void {
   const { bandWavelength, bandAmplitude, baseLightness, saturation, monoHue } = params
 
@@ -418,19 +420,17 @@ export function computeColorWallBased(
   const sinA = tiltData.sinOrient
   const rdx = dx * cosA - dy * sinA
   const rdy = dx * sinA + dy * cosA
-  // Enhanced-mode uses smoother band wobble: reference agate photos
-  // show ~4-6 large undulations around the circumference with no fine
-  // ripples. Stock params (0.035 scale × 3 octaves) put the top octave
-  // at ~7-cell period, shorter than most bands → sub-band jitter.
-  // Enhanced drops to 2 octaves at 0.020 scale, bumps warp strength so
-  // the wobble amplitude stays in the same visual range.
-  const ns = enhancedShading
-    ? currentProfile.bandNoiseScale * 0.57   // ~0.020 — fewer cycles
-    : currentProfile.bandNoiseScale
+  // Smoother band wobble: reference agate photos show ~4-6 large
+  // undulations around the circumference with no fine ripples. Profile
+  // defaults (0.035 scale × 3 octaves) put the top octave at ~7-cell
+  // period, shorter than most bands → sub-band jitter. 2 octaves at
+  // 0.57× scale + 1.25× warp strength keeps amplitude range while
+  // removing the high-frequency chatter.
+  const ns = currentProfile.bandNoiseScale * 0.57
   let nx = rdx * ns + tiltData.noiseOffsetX
   let ny = rdy * ns + tiltData.noiseOffsetY
   const pwHL = bandPwHL
-  const octaves = enhancedShading ? 2 : currentProfile.bandOctaves
+  const octaves = 2
   let warp = 0
   let amp = 1.0
   for (let oi = 0; oi < octaves; oi++) {
@@ -444,10 +444,7 @@ export function computeColorWallBased(
   const fadeDist = bandWavelength * currentProfile.bandCenterFadeMultiplier
   const fadeDist2 = fadeDist * fadeDist
   const centerFade = dist2FromSeed < fadeDist2 ? Math.sqrt(dist2FromSeed) / fadeDist : 1
-  const warpStrengthEff = enhancedShading
-    ? currentProfile.bandWarpStrength * 1.25 // compensate for octave drop
-    : currentProfile.bandWarpStrength
-  const warpedDist = dist + warp * bandWavelength * warpStrengthEff * centerFade
+  const warpedDist = dist + warp * bandWavelength * currentProfile.bandWarpStrength * 1.25 * centerFade
 
   const hueKey = (monoHue + 0.5) | 0
   const absDist = warpedDist < 0 ? -warpedDist : warpedDist
@@ -460,39 +457,19 @@ export function computeColorWallBased(
   let L = band.L
   let C = band.C
 
-  // Zonal fat-zone internal shading (classic mode only — enhanced mode's
-  // generalised gradient subsumes this case).
-  if (!enhancedShading && isZonalLayout(hueKey) && bandIdx === 1) {
-    const bandStart = cumulative[0]
-    const bandEnd = cumulative[1]
-    const span = bandEnd - bandStart
-    if (span > 0) {
-      const t = (absDist - bandStart) / span // 0 at outer wall, 1 at inner
-      const shade = 0.055 * (t - 0.5) // -0.028 at outer, +0.028 at inner
-      L = L - shade // outer brighter, inner dimmer
-    }
-  }
-
-  // ── Enhanced shading (dev A/B) ───────────────────────────────
-  // Two techniques from real agate photography:
-  //   A. Intra-band radial translucency gradient — within each band, L
-  //      shifts slightly from outer edge to inner edge (light bands
-  //      dim inward, dark bands brighten inward). Reads as "seeing
-  //      into the translucent chalcedony". Amplitude scales with band
-  //      width (fat bands show more chemistry drift).
-  //   B. Soft band-boundary lerp — within ~0.7 cells of a band's outer
-  //      edge, blend toward the previous band. Kills the ink-outline
-  //      cartoon look at fortification boundaries. Skipped at bandIdx≤1
-  //      where rim contamination provides a more authentic fBM texture.
-  if (enhancedShading && bandIdx > 0) {
-    const bandStart = bandIdx > 0 ? cumulative[bandIdx - 1] : 0
+  // ── Baseline shading (approved iter 2-8) ────────────────────
+  // Intra-band radial translucency gradient, low-frequency 2-octave
+  // milky cloud modulation, soft band-boundary lerp, grouped gradient
+  // for consecutive same-family bands. All derived by A/B-tuning
+  // against Malawi + green-Brazil reference photos.
+  if (bandIdx > 0) {
+    const bandStart = cumulative[bandIdx - 1]
     const bandEnd = cumulative[bandIdx]
     const span = bandEnd - bandStart
     if (span > 0) {
-      // Gradient-group lookup — consecutive same-family bands share one
-      // continuous radial gradient instead of sawtoothing per-band.
-      // Precomputed per (hueKey, seedId) so the per-pixel cost is two
-      // Uint16Array reads regardless of group size.
+      // Group-aware gradient range: consecutive same-family bands
+      // share one continuous radial fade. Precomputed per (hueKey,
+      // seedId) so per-pixel cost is two Uint16Array reads.
       const groups = getBandGroups(hueKey, seedId, baseLightness, saturation)
       const gStartIdx = groups.start[bandIdx]
       const gEndIdx = groups.end[bandIdx]
@@ -500,41 +477,33 @@ export function computeColorWallBased(
       const groupEnd = cumulative[gEndIdx]
       const groupSpan = groupEnd - groupStart
 
-      // A: gradient uses UNWARPED wall distance so the fBM band-warp
-      // can't imprint itself as tangent hatch inside a fat band.
-      // `rawDist` is a smooth radial scalar field (wall distance only),
-      // so `(rawDist - groupStart) / groupSpan` is purely radial and
-      // continuous across adjacent same-family bands.
+      // Translucency gradient uses UNWARPED wall distance so fBM
+      // band-warp can't imprint as tangent hatch inside a fat band.
+      // Purely radial; continuous across same-family groups.
       const rawCellsFromOuter = rawDist - groupStart
       const pRaw = groupSpan > 0 ? rawCellsFromOuter / groupSpan : 0
       const pcRaw = pRaw < 0 ? 0 : pRaw > 1 ? 1 : pRaw
       const widthFactor = Math.min(2.5, Math.sqrt(Math.max(1, groupSpan / 5)))
-      const base = L > 0.6 ? -0.040 : L < 0.3 ? 0.018 : -0.028
-      L += base * (pcRaw - 0.5) * 2 * widthFactor
+      const gradBase = L > 0.6 ? -0.040 : L < 0.3 ? 0.018 : -0.028
+      L += gradBase * (pcRaw - 0.5) * 2 * widthFactor
 
-      // C: milky cloud modulation — 2-octave fBM. Reference agate
-      // photos (Malawi blue, green Brazil) show clear "silver wave"
-      // luminance drift across a translucent interior: one global
-      // warm↔cool shift spanning the whole specimen (low octave)
-      // plus medium-scale wisps inside fat bands (high octave).
-      // Amplitudes and periods calibrated to match the ~10% L
-      // spread observed in reference photographs. Both octaves live
-      // well below the narrowest band width so they never produce
-      // tangent streaks within a band.
+      // Milky cloud — 2-octave fBM matching the luminance drift seen
+      // across translucent interiors in reference photos. Both octaves
+      // are lower frequency than the narrowest band so they can't
+      // produce tangent streaks within a band.
       const cloudX0 = dx * 0.005 + tiltData.noiseOffsetX * 0.3
       const cloudY0 = dy * 0.005 + tiltData.noiseOffsetY * 0.3
       const cloudLow = valueNoise(cloudX0, cloudY0) - 0.5
       const cloudX1 = dx * 0.014 + tiltData.noiseOffsetX * 0.7
       const cloudY1 = dy * 0.014 + tiltData.noiseOffsetY * 0.7
       const cloudHi = valueNoise(cloudX1, cloudY1) - 0.5
-      const cloud = cloudLow * 0.065 + cloudHi * 0.035 // ±0.05 total L
-      L += cloud
+      L += cloudLow * 0.065 + cloudHi * 0.035
       C = C * (1 + (cloudLow + cloudHi) * 0.18)
       if (C < 0) C = 0
 
-      // B: soft outer-edge lerp uses the WARPED position because that's
-      // where the visible band boundary actually sits. Skip bandIdx===1
-      // (rim block handles it with ragged fBM fingers).
+      // Soft outer-edge lerp using the WARPED position (visible band
+      // boundary sits there). Skip bandIdx===1 — rim block handles
+      // the shell→chalcedony interface with ragged fBM fingers.
       if (bandIdx >= 2) {
         const cellsFromOuter = absDist - bandStart
         const EDGE_CELLS = 1.0
@@ -553,8 +522,17 @@ export function computeColorWallBased(
           }
         }
       }
+
     }
   }
+
+  // ── Experimental candidate: (empty) ─────────────────────────
+  // No current experiment — previous halo proposal rejected (tracked
+  // the unwarped rawDist so it broke into dashes wherever the fBM
+  // warp pushed the visible edge away from the halo's fire position).
+  // Future candidates go here; the `experimental` flag is preserved
+  // so the A/B harness keeps working.
+  void experimental
 
   // Onyx pool druse: bright crystal flecks scattered in the solid black
   // central pool. Real onyx pools crystallise as tiny quartz druse that

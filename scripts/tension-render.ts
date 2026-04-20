@@ -147,9 +147,9 @@ async function main() {
       outdir:  { type: 'string', default: '/tmp/tension-iter' },
       width:   { type: 'string', default: '1600' },
       height:  { type: 'string', default: '900' },
-      /** Parity mode: run BOTH passes with enhancedShading=false.
+      /** Parity mode: run BOTH passes with experimental=false.
        *  Expected: identical bytes → mean/peak delta 0. Any non-zero
-       *  means the classic path has picked up a hidden side effect. */
+       *  means the baseline path has picked up a hidden side effect. */
       parity:  { type: 'boolean', default: false },
     },
   })
@@ -185,7 +185,7 @@ async function main() {
     0.065
   )
   const wallDist = computeWallDistance(gridData, W, H)
-  const septum = computeInterSeedMask(gridData, W, H)
+  const septum = computeInterSeedMask(gridData, W, H, 1)
 
   // Per-seed max wall distance (onyx druse gating).
   const seedMaxWallDist = new Map<number, number>()
