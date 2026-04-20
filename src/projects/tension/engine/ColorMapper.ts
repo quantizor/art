@@ -160,10 +160,18 @@ function getBandGroups(
   return { start, end }
 }
 
-/** Cache key → cumulative width array. Evicted when a new palette is set. */
-let bandCacheKey = -1
-let bandCacheCumulative: Float64Array | null = null
-let bandCacheBaseWidth = 0
+/**
+ * Per-(hueKey, baseWidth, experimental) cumulative band-width caches.
+ * A and B may stage different zonal/onyx width schemes, so each side
+ * needs its own cumulative array. Evicted when a new palette is set.
+ */
+interface BandCumulativeSlot {
+  key: number
+  baseWidth: number
+  cumulative: Float64Array
+}
+let bandCacheBaseline: BandCumulativeSlot | null = null
+let bandCacheExperimental: BandCumulativeSlot | null = null
 
 /**
  * Decide if a nodule uses "single-feedback zone" layout (Malawi-style):
@@ -215,9 +223,10 @@ export function getIrisPaletteIdx(hueKey: number, seedId: number, paletteCount: 
  * Get or build the cumulative band-width array for a given hueKey + baseWidth.
  * Returns a Float64Array where entry[i] = sum of widths for bands 0..i.
  */
-function getBandCumulative(hueKey: number, baseWidth: number): Float64Array {
-  if (bandCacheKey === hueKey && bandCacheBaseWidth === baseWidth && bandCacheCumulative) {
-    return bandCacheCumulative
+function getBandCumulative(hueKey: number, baseWidth: number, experimental: boolean): Float64Array {
+  const slot = experimental ? bandCacheExperimental : bandCacheBaseline
+  if (slot && slot.key === hueKey && slot.baseWidth === baseWidth) {
+    return slot.cumulative
   }
 
   const cum = new Float64Array(MAX_BANDS)
@@ -252,14 +261,20 @@ function getBandCumulative(hueKey: number, baseWidth: number): Float64Array {
             : 0.8 + cellHash(i + 903, hueKey) * 1.2        // normal
       }
     } else if (zonal && i === 1) {
-      // Fat quiet zone — the Malawi "single-feedback" expanse. Large
-      // enough to dominate but leaves room for visible band structure
-      // around it, and the renderer adds subtle internal L shading.
-      widthFactor = 14 + cellHash(i + 700, hueKey) * 8
+      // Fat quiet zone — the Malawi "single-feedback" expanse.
+      // Experimental path pushes the zone wider so it dominates the
+      // specimen in the reference-photo ratio (~40% of radius).
+      widthFactor = experimental
+        ? 25 + cellHash(i + 700, hueKey) * 20  // 25–45× — dominant expanse
+        : 14 + cellHash(i + 700, hueKey) * 8   // 14–22× — current baseline
     } else if (zonal && i >= 2 && i <= 7) {
-      // Tight accent cluster — thicker than a hair seam so the bands
-      // actually read as fortification between the fat zone and eye.
-      widthFactor = 0.9 + cellHash(i + 800, hueKey) * 0.8
+      // Accent cluster between fat zone and central eye. Experimental
+      // path drops these to hair-thin so the cluster reads as tight
+      // fortification (Malawi / single-feedback style) instead of
+      // individual chunky colored stripes.
+      widthFactor = experimental
+        ? 0.35 + cellHash(i + 800, hueKey) * 0.35 // 0.35–0.70 — hair
+        : 0.9 + cellHash(i + 800, hueKey) * 0.8   // 0.9–1.7 — current baseline
     } else {
       widthFactor = widthMin + cellHash(i + 200, hueKey) * widthRange
       if (thinFrequency > 0 && cellHash(i + 500, hueKey) < thinFrequency) {
@@ -274,9 +289,9 @@ function getBandCumulative(hueKey: number, baseWidth: number): Float64Array {
     cum[i] = acc
   }
 
-  bandCacheKey = hueKey
-  bandCacheBaseWidth = baseWidth
-  bandCacheCumulative = cum
+  const newSlot: BandCumulativeSlot = { key: hueKey, baseWidth, cumulative: cum }
+  if (experimental) bandCacheExperimental = newSlot
+  else bandCacheBaseline = newSlot
   return cum
 }
 
@@ -448,7 +463,7 @@ export function computeColorWallBased(
   const hueKey = (monoHue + 0.5) | 0
   const absDist = warpedDist < 0 ? -warpedDist : warpedDist
   const baseWidth = bandWavelength * (0.3 + bandAmplitude * 0.7)
-  const cumulative = getBandCumulative(hueKey, baseWidth)
+  const cumulative = getBandCumulative(hueKey, baseWidth, experimental)
   const bandIdx = findBandIndex(cumulative, absDist)
 
   const band = currentStrategy.getBandColor(bandIdx, hueKey, seedId, baseLightness, saturation)
@@ -482,7 +497,10 @@ export function computeColorWallBased(
       const rawCellsFromOuter = rawDist - groupStart
       const pRaw = groupSpan > 0 ? rawCellsFromOuter / groupSpan : 0
       const pcRaw = pRaw < 0 ? 0 : pRaw > 1 ? 1 : pRaw
-      const widthFactor = Math.min(2.5, Math.sqrt(Math.max(1, groupSpan / 5)))
+      // Experimental path uncaps the gradient width-factor so very
+      // fat bands (zonal quiet zone, onyx pool) show a noticeably
+      // larger L spread across the expanse.
+      const widthFactor = Math.min(experimental ? 4.0 : 2.5, Math.sqrt(Math.max(1, groupSpan / 5)))
       const gradBase = L > 0.6 ? -0.040 : L < 0.3 ? 0.018 : -0.028
       L += gradBase * (pcRaw - 0.5) * 2 * widthFactor
 
@@ -524,14 +542,6 @@ export function computeColorWallBased(
 
     }
   }
-
-  // ── Experimental candidate: (empty) ─────────────────────────
-  // No current experiment — previous halo proposal rejected (tracked
-  // the unwarped rawDist so it broke into dashes wherever the fBM
-  // warp pushed the visible edge away from the halo's fire position).
-  // Future candidates go here; the `experimental` flag is preserved
-  // so the A/B harness keeps working.
-  void experimental
 
   // Onyx pool druse: bright crystal flecks scattered in the solid black
   // central pool. Real onyx pools crystallise as tiny quartz druse that
@@ -600,61 +610,129 @@ export function computeColorWallBased(
     // the next light band (real-agate "post-Mn speckle"). Fires at the
     // rim contact (bandIdx=0, source=host rock) and at every dark→light
     // internal transition (bandIdx>=1, source=previous band).
-    // Grain strip is absolute-cells from the band boundary (not a
-    // fraction of band width) so the annulus doesn't bake deep into a
-    // fat zonal expanse. Density falls off with distance — densest
-    // near the shell, sparser tail spreading inward so tiny specks of
-    // residual material carry further into the light deposit.
-    const GRAIN_MAX_CELLS = 6.5
     const cellsFromOuter = absDist - bandStart
     let sourceBand: BandColor | null = null
+    // Experimental path uses a wider window so specks can scatter
+    // further inward as trailing dust.
+    const grainMaxCells = experimental ? 14 : 6.5
     let grainWindow = false
     if (bandIdx === 0) {
       if (shellIsDark) {
         sourceBand = shell
-        grainWindow = cellsFromOuter > 0.6 && cellsFromOuter < GRAIN_MAX_CELLS
+        grainWindow = cellsFromOuter > 0.6 && cellsFromOuter < grainMaxCells
       }
     } else {
       const prev = currentStrategy.getBandColor(bandIdx - 1, hueKey, seedId, baseLightness, saturation)
       if (prev.L < 0.32 && band.L > 0.55) {
         sourceBand = prev
-        grainWindow = cellsFromOuter < GRAIN_MAX_CELLS
+        grainWindow = cellsFromOuter < grainMaxCells
       }
     }
     if (sourceBand && grainWindow) {
-      // Density falloff: dense near the shell boundary, tapering out
-      // with distance. Keeps grain visually concentrated at the skin
-      // but lets rare tiny specks scatter into the fat zone.
-      const distRatio = cellsFromOuter / GRAIN_MAX_CELLS
-      const densityFactor = 1 - distRatio * 0.85
-      const LAT = 10
-      const cx = Math.round(dx / LAT)
-      const cy = Math.round(dy / LAT)
-      const seedOff = bandIdx * 977
-      const spawn = cellHash(cx * 239 + hueKey + seedOff, cy * 421 + seedOff)
-      if (spawn < 0.055 * densityFactor) {
-        const jx = (cellHash(cx + seedOff, cy ^ 907) - 0.5) * LAT * 0.7
-        const jy = (cellHash(cx ^ 131, cy + seedOff) - 0.5) * LAT * 0.7
-        const ddx = dx - (cx * LAT + jx)
-        const ddy = dy - (cy * LAT + jy)
-        const d2 = ddx * ddx + ddy * ddy
-        // Most stamps are tiny 1-2px dots — proper speckle rather than
-        // splats. A rare larger clump breaks monotony. Far from the
-        // shell, suppress clumps so the tail reads as pure specks.
-        const clumpRoll = cellHash(cx ^ (337 + seedOff), cy ^ 641)
-        const isClump = clumpRoll < 0.08 && distRatio < 0.45
-        const sizeRoll = cellHash(cx ^ (557 + seedOff), cy ^ 283)
-        const rInner = isClump
-          ? 1.1 + sizeRoll * 0.6
-          : 0.35 + sizeRoll * 0.5
-        const rOuter = rInner + 0.5
-        const d = Math.sqrt(d2)
-        if (d < rOuter) {
-          const t = d <= rInner ? 1 : 1 - (d - rInner) / (rOuter - rInner)
-          const gL = Math.max(0.05, sourceBand.L - 0.02)
-          L = L + (gL - L) * t
-          C = C + (sourceBand.C - C) * t
-          if (sourceBand.C > 0.01) H = H + (sourceBand.H - H) * t
+      const distRatio = cellsFromOuter / grainMaxCells
+
+      if (experimental) {
+        // ── Experimental: two-scale speckle ─────────────────────
+        // Fine dust pass — dense tiny specks across the whole window,
+        // with a gentle falloff so trailing dust reaches the inner
+        // extent. Lattice 6 with 9% spawn gives ~0.025 stamps per cell².
+        // Particles are sub-pixel round (r 0.25–0.55) so at 1:1 they
+        // read as crisp specks, not soft clouds.
+        const seedOff = bandIdx * 977
+        const LAT_F = 6
+        {
+          const cxF = Math.round(dx / LAT_F)
+          const cyF = Math.round(dy / LAT_F)
+          const densityF = 1 - distRatio * 0.60 // shallow tail — keep specks all the way
+          const spawnF = cellHash(cxF * 239 + hueKey + seedOff, cyF * 421 + seedOff)
+          if (spawnF < 0.09 * densityF) {
+            const jx = (cellHash(cxF + seedOff, cyF ^ 907) - 0.5) * LAT_F * 0.9
+            const jy = (cellHash(cxF ^ 131, cyF + seedOff) - 0.5) * LAT_F * 0.9
+            const ddx = dx - (cxF * LAT_F + jx)
+            const ddy = dy - (cyF * LAT_F + jy)
+            const d2 = ddx * ddx + ddy * ddy
+            const sizeRoll = cellHash(cxF ^ (557 + seedOff), cyF ^ 283)
+            const rInner = 0.25 + sizeRoll * 0.30
+            const rOuter = rInner + 0.40
+            if (d2 < rOuter * rOuter) {
+              const d = Math.sqrt(d2)
+              const t = d <= rInner ? 1 : 1 - (d - rInner) / (rOuter - rInner)
+              const gL = Math.max(0.05, sourceBand.L - 0.02)
+              L = L + (gL - L) * t
+              C = C + (sourceBand.C - C) * t
+              if (sourceBand.C > 0.01) H = H + (sourceBand.H - H) * t
+            }
+          }
+        }
+        // Coarse clump pass — rare 2-3-particle groupings near the
+        // shell contact, where larger residual aggregates would have
+        // settled first. Lattice 14 with 6% spawn fires only in the
+        // outer 45% of the window.
+        if (distRatio < 0.45) {
+          const LAT_C = 14
+          const cxC = Math.round(dx / LAT_C)
+          const cyC = Math.round(dy / LAT_C)
+          const spawnC = cellHash(cxC * 281 + hueKey + seedOff, cyC * 307 + seedOff)
+          if (spawnC < 0.06) {
+            // Anchor for this clump + 2 satellites within ±4 cells.
+            const axC = cxC * LAT_C + (cellHash(cxC + seedOff, cyC ^ 733) - 0.5) * LAT_C * 0.5
+            const ayC = cyC * LAT_C + (cellHash(cxC ^ 109, cyC + seedOff) - 0.5) * LAT_C * 0.5
+            const offsets: number[] = [0, 0,
+              (cellHash(cxC ^ 37, cyC ^ 103) - 0.5) * 7.0,
+              (cellHash(cxC ^ 71, cyC ^ 137) - 0.5) * 7.0,
+              (cellHash(cxC ^ 149, cyC ^ 211) - 0.5) * 7.0,
+              (cellHash(cxC ^ 191, cyC ^ 239) - 0.5) * 7.0,
+            ]
+            for (let k = 0; k < 3; k++) {
+              const ox = offsets[k * 2]
+              const oy = offsets[k * 2 + 1]
+              const ddx = dx - (axC + ox)
+              const ddy = dy - (ayC + oy)
+              const d2 = ddx * ddx + ddy * ddy
+              const szRoll = cellHash(cxC ^ (83 + k), cyC ^ (127 + k))
+              const rInner = 0.55 + szRoll * 0.55
+              const rOuter = rInner + 0.6
+              if (d2 < rOuter * rOuter) {
+                const d = Math.sqrt(d2)
+                const t = d <= rInner ? 1 : 1 - (d - rInner) / (rOuter - rInner)
+                const gL = Math.max(0.05, sourceBand.L - 0.02)
+                L = L + (gL - L) * t
+                C = C + (sourceBand.C - C) * t
+                if (sourceBand.C > 0.01) H = H + (sourceBand.H - H) * t
+                break
+              }
+            }
+          }
+        }
+      } else {
+        // ── Baseline: single-scale lattice stamps ────────────────
+        const densityFactor = 1 - distRatio * 0.85
+        const LAT = 10
+        const cx = Math.round(dx / LAT)
+        const cy = Math.round(dy / LAT)
+        const seedOff = bandIdx * 977
+        const spawn = cellHash(cx * 239 + hueKey + seedOff, cy * 421 + seedOff)
+        if (spawn < 0.055 * densityFactor) {
+          const jx = (cellHash(cx + seedOff, cy ^ 907) - 0.5) * LAT * 0.7
+          const jy = (cellHash(cx ^ 131, cy + seedOff) - 0.5) * LAT * 0.7
+          const ddx = dx - (cx * LAT + jx)
+          const ddy = dy - (cy * LAT + jy)
+          const d2 = ddx * ddx + ddy * ddy
+          const clumpRoll = cellHash(cx ^ (337 + seedOff), cy ^ 641)
+          const isClump = clumpRoll < 0.08 && distRatio < 0.45
+          const sizeRoll = cellHash(cx ^ (557 + seedOff), cy ^ 283)
+          const rInner = isClump
+            ? 1.1 + sizeRoll * 0.6
+            : 0.35 + sizeRoll * 0.5
+          const rOuter = rInner + 0.5
+          const d = Math.sqrt(d2)
+          if (d < rOuter) {
+            const t = d <= rInner ? 1 : 1 - (d - rInner) / (rOuter - rInner)
+            const gL = Math.max(0.05, sourceBand.L - 0.02)
+            L = L + (gL - L) * t
+            C = C + (sourceBand.C - C) * t
+            if (sourceBand.C > 0.01) H = H + (sourceBand.H - H) * t
+          }
         }
       }
     }
@@ -707,8 +785,8 @@ export function computeColorWallBased(
 
 /** Invalidate the band width cache (call when palette changes) */
 export function invalidateBandCache(): void {
-  bandCacheKey = -1
-  bandCacheCumulative = null
+  bandCacheBaseline = null
+  bandCacheExperimental = null
   groupStartCache.clear()
   groupEndCache.clear()
   currentStrategy.reset()

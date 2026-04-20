@@ -37,7 +37,23 @@ import type { CrystalProfile, SimulationParams, ColorParams, SimulationPhase } f
 const STORAGE_KEYS = {
   variant: 'tension:variant',
   onionSplit: 'tension:onionSplit',
+  seedCount: 'tension:seedCount',
 } as const
+
+/** Read a persisted integer setting within [min, max], falling back to default. */
+function loadIntPref(key: string, fallback: number, min: number, max: number): number {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw == null) return fallback
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return fallback
+    const rounded = Math.round(n)
+    return rounded < min ? min : rounded > max ? max : rounded
+  } catch {
+    return fallback
+  }
+}
 
 function loadPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
   if (typeof window === 'undefined') return fallback
@@ -197,10 +213,11 @@ export function CrystalGrowthViewer() {
   const [simParams, setSimParams] = useState<SimulationParams>(() => {
     const masterSeed = decodeSeed(seedString)
     const simRng = forkDomain(masterSeed, DOMAIN.SIM_PARAMS)
-    return {
-      ...DEFAULT_SIM_PARAMS,
-      ...randomSimParamsFromProfile(agateProfile, simRng),
-    }
+    const derived = { ...DEFAULT_SIM_PARAMS, ...randomSimParamsFromProfile(agateProfile, simRng) }
+    // User's seedCount choice overrides the seed-derived default so the
+    // slider position survives page reloads.
+    const [scMin, scMax] = agateProfile.seedCountRange
+    return { ...derived, seedCount: loadIntPref(STORAGE_KEYS.seedCount, derived.seedCount, scMin, scMax) }
   })
   const [colorParams, setColorParams] = useState<ColorParams>(() => {
     const masterSeed = decodeSeed(seedString)
@@ -226,6 +243,7 @@ export function CrystalGrowthViewer() {
   })
 
   useEffect(() => { savePref(STORAGE_KEYS.variant, variant) }, [variant])
+  useEffect(() => { savePref(STORAGE_KEYS.seedCount, String(simParams.seedCount)) }, [simParams.seedCount])
   useEffect(() => {
     if (!import.meta.env.DEV) return
     savePref(STORAGE_KEYS.onionSplit, String(onionSplit))
@@ -600,6 +618,10 @@ export function CrystalGrowthViewer() {
     setSimParams(prev => ({
       ...prev,
       ...randomSimParamsFromProfile(agateProfile, simRng),
+      // Preserve the user's chosen seedCount across randomize —
+      // persistence rule: user-modifiable settings stick through any
+      // reload or seed change.
+      seedCount: prev.seedCount,
       facets: 0,
     }))
     setColorParams(randomParamsFromProfile(agateProfile, colorRng))
