@@ -412,16 +412,30 @@ export function computeColorWallBased(
       const rawCellsFromOuter = rawDist - bandStart
       const pRaw = rawCellsFromOuter / span
       const pcRaw = pRaw < 0 ? 0 : pRaw > 1 ? 1 : pRaw
-      const widthFactor = Math.min(2, Math.sqrt(Math.max(1, span / 5)))
-      const base = L > 0.6 ? -0.026 : L < 0.3 ? 0.012 : -0.018
+      const widthFactor = Math.min(2.5, Math.sqrt(Math.max(1, span / 5)))
+      const base = L > 0.6 ? -0.040 : L < 0.3 ? 0.018 : -0.028
       L += base * (pcRaw - 0.5) * 2 * widthFactor
+
+      // C: low-frequency cloud modulation. 2D value noise at period
+      // ~125 cells imprints a specimen-scale warm/cool drift that
+      // crosses multiple bands coherently — real agate chemistry
+      // isn't uniform across a cavity. Frequency is well BELOW the
+      // narrowest band width so this never reads as tangent streaks
+      // within a single band. Amplitude kept small: ±2% L, ±12% C.
+      const cloudScale = 0.008
+      const cloudX = dx * cloudScale + tiltData.noiseOffsetX * 0.3
+      const cloudY = dy * cloudScale + tiltData.noiseOffsetY * 0.3
+      const cloudN = valueNoise(cloudX, cloudY) - 0.5
+      L += cloudN * 0.040
+      C = C * (1 + cloudN * 0.24)
+      if (C < 0) C = 0
 
       // B: soft outer-edge lerp uses the WARPED position because that's
       // where the visible band boundary actually sits. Skip bandIdx===1
       // (rim block handles it with ragged fBM fingers).
       if (bandIdx >= 2) {
         const cellsFromOuter = absDist - bandStart
-        const EDGE_CELLS = 0.7
+        const EDGE_CELLS = 1.0
         const edgeWindow = Math.min(EDGE_CELLS, span * 0.5)
         if (cellsFromOuter < edgeWindow) {
           const prev = currentStrategy.getBandColor(bandIdx - 1, hueKey, seedId, baseLightness, saturation)

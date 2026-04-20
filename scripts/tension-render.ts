@@ -149,6 +149,10 @@ async function main() {
       height:  { type: 'string', default: '900' },
       cropW:   { type: 'string', default: '800' },
       cropH:   { type: 'string', default: '300' },
+      /** Parity mode: run BOTH passes with enhancedShading=false.
+       *  Expected: identical bytes → mean/peak delta 0. Any non-zero
+       *  means the classic path has picked up a hidden side effect. */
+      parity:  { type: 'boolean', default: false },
     },
   })
 
@@ -219,7 +223,7 @@ async function main() {
     const axis0 = seed.axes[0] ?? 0
     const off = i * 4
     computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaA, rgbaA, off, cavityMax, false)
-    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaB, rgbaB, off, cavityMax, true)
+    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaB, rgbaB, off, cavityMax, values.parity ? false : true)
     if (septum[i]) {
       rgbaA[off] = SEPTUM[0]; rgbaA[off + 1] = SEPTUM[1]; rgbaA[off + 2] = SEPTUM[2]; rgbaA[off + 3] = 255
       rgbaB[off] = SEPTUM[0]; rgbaB[off + 1] = SEPTUM[1]; rgbaB[off + 2] = SEPTUM[2]; rgbaB[off + 3] = 255
