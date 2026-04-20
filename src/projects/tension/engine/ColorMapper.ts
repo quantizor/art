@@ -345,11 +345,19 @@ export function computeColorWallBased(
   const sinA = tiltData.sinOrient
   const rdx = dx * cosA - dy * sinA
   const rdy = dx * sinA + dy * cosA
-  const ns = currentProfile.bandNoiseScale
+  // Enhanced-mode uses smoother band wobble: reference agate photos
+  // show ~4-6 large undulations around the circumference with no fine
+  // ripples. Stock params (0.035 scale × 3 octaves) put the top octave
+  // at ~7-cell period, shorter than most bands → sub-band jitter.
+  // Enhanced drops to 2 octaves at 0.020 scale, bumps warp strength so
+  // the wobble amplitude stays in the same visual range.
+  const ns = enhancedShading
+    ? currentProfile.bandNoiseScale * 0.57   // ~0.020 — fewer cycles
+    : currentProfile.bandNoiseScale
   let nx = rdx * ns + tiltData.noiseOffsetX
   let ny = rdy * ns + tiltData.noiseOffsetY
   const pwHL = bandPwHL
-  const octaves = currentProfile.bandOctaves
+  const octaves = enhancedShading ? 2 : currentProfile.bandOctaves
   let warp = 0
   let amp = 1.0
   for (let oi = 0; oi < octaves; oi++) {
@@ -363,7 +371,10 @@ export function computeColorWallBased(
   const fadeDist = bandWavelength * currentProfile.bandCenterFadeMultiplier
   const fadeDist2 = fadeDist * fadeDist
   const centerFade = dist2FromSeed < fadeDist2 ? Math.sqrt(dist2FromSeed) / fadeDist : 1
-  const warpedDist = dist + warp * bandWavelength * currentProfile.bandWarpStrength * centerFade
+  const warpStrengthEff = enhancedShading
+    ? currentProfile.bandWarpStrength * 1.25 // compensate for octave drop
+    : currentProfile.bandWarpStrength
+  const warpedDist = dist + warp * bandWavelength * warpStrengthEff * centerFade
 
   const hueKey = (monoHue + 0.5) | 0
   const absDist = warpedDist < 0 ? -warpedDist : warpedDist
