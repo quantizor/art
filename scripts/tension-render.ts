@@ -25,6 +25,7 @@ import { decodeSeed, forkDomain, forkSeedDomain, DOMAIN, type PRNG } from '~/pro
 import { generateSeedPositions } from '~/projects/tension/engine/SeedPlacer'
 import { partitionCavities } from '~/projects/tension/engine/CavityPartition'
 import { computeWallDistance, computeInterSeedMask } from '~/projects/tension/engine/WallDistance'
+import { valueNoise, cellHash } from '~/projects/tension/engine/Noise'
 import {
   setActiveProfile,
   setVariantOverride,
@@ -178,7 +179,8 @@ async function main() {
     buildSeed(masterSeed, i, p.x, p.y, sim.axisCount, agateProfile)
   )
 
-  // Partition + wall distance (args mirror runPartition in the viewer).
+  // Single partition — A and B share the same cavity layout; the
+  // active experiment only changes how non-cavity pixels are painted.
   const { gridData } = partitionCavities(
     seeds, W, H,
     agateProfile.growthNoiseScale * 0.22,
@@ -187,7 +189,6 @@ async function main() {
   const wallDist = computeWallDistance(gridData, W, H)
   const septum = computeInterSeedMask(gridData, W, H, 1)
 
-  // Per-seed max wall distance (onyx druse gating).
   const seedMaxWallDist = new Map<number, number>()
   for (let i = 0; i < gridData.length; i++) {
     const s = gridData[i]
@@ -206,22 +207,85 @@ async function main() {
   const rgbaA = new Uint8Array(W * H * 4)
   const rgbaB = new Uint8Array(W * H * 4)
 
-  const N = gridData.length
-  for (let i = 0; i < N; i++) {
+  // ── Experimental host-rock matrix painter (B only) ─────────────
+  // References (Malawi red-centre, six-specimen photo) show a chunky
+  // brecciated rock body around each agate: warm tan/brown mottle
+  // with darker fracture veins and rare pale crystalline pockets.
+  // Pure black backgrounds read as "polished specimen on black velvet"
+  // — part of what makes our output look oyster-shell-like. This
+  // painter produces the stone matrix in sRGB directly (perceptual
+  // precision isn't needed for a rough organic texture).
+  const paintHostRock = (px: number, py: number, rgba: Uint8Array, off: number): void => {
+    // Multi-scale fBM mottle. Rotating + offsetting each octave by
+    // irrational amounts breaks up any axis-aligned lattice signature
+    // from the underlying value noise.
+    const n1 = valueNoise(px * 0.009 + 13,  py * 0.009 - 7)    // base
+    const n2 = valueNoise(px * 0.021 + 191, py * 0.019 + 83)   // medium
+    const n3 = valueNoise(px * 0.047 + 557, py * 0.051 + 317)  // finer
+    const n4 = valueNoise(px * 0.11  + 29,  py * 0.097 + 71)   // grain
+    const mottle = n1 * 0.5 + n2 * 0.27 + n3 * 0.15 + n4 * 0.08 // ~0..1
+    // Higher contrast range — weathered basalt reads 0.15 → 0.55 sRGB.
+    let r = 0.18 + mottle * 0.40
+    let g = 0.14 + mottle * 0.32
+    let b = 0.10 + mottle * 0.22
+    // Darker organic veining — use smooth (mottle^3) bias instead of
+    // threshold on raw grid-noise. Avoids stairstep rectangles.
+    const veinBias = (1 - mottle) * (1 - mottle) * (1 - mottle) * n4
+    const vein = 1 - veinBias * 0.55
+    r *= vein; g *= vein; b *= vein
+    // Pale crystalline pockets — rarer, smaller, and clumped along
+    // regions where the base mottle is already lighter (more permeable
+    // rock in practice). Lattice sparser so pockets are an accent not
+    // the dominant texture.
+    const latSize = 42
+    const gx = Math.floor(px / latSize)
+    const gy = Math.floor(py / latSize)
+    const pocketRoll = cellHash(gx + 7, gy + 11)
+    if (pocketRoll < 0.015 && mottle > 0.55) {
+      const cxp = gx * latSize + latSize * 0.5 + (cellHash(gx * 3, gy * 5) - 0.5) * latSize * 0.4
+      const cyp = gy * latSize + latSize * 0.5 + (cellHash(gx * 11, gy * 17) - 0.5) * latSize * 0.4
+      const ddx = px - cxp
+      const ddy = py - cyp
+      const d2 = ddx * ddx + ddy * ddy
+      const rad = 5 + cellHash(gx * 3, gy * 5) * 8
+      if (d2 < rad * rad) {
+        const t = 1 - d2 / (rad * rad)
+        const s = t * t * (3 - 2 * t) * 0.7
+        r = r + (0.88 - r) * s
+        g = g + (0.84 - g) * s
+        b = b + (0.76 - b) * s
+      }
+    }
+    rgba[off]     = r < 0 ? 0 : r > 1 ? 255 : (r * 255) | 0
+    rgba[off + 1] = g < 0 ? 0 : g > 1 ? 255 : (g * 255) | 0
+    rgba[off + 2] = b < 0 ? 0 : b > 1 ? 255 : (b * 255) | 0
+    rgba[off + 3] = 255
+  }
+
+  const experimentalOn = !values.parity
+  for (let i = 0; i < gridData.length; i++) {
     const seedId = gridData[i]
-    if (seedId === 0) continue
-    const seed = seedsMap.get(seedId)!
-    const tilt = tiltCache.get(seedId)!
     const cy = (i / W) | 0
     const cx = i - cy * W
+    const off = i * 4
+    if (seedId === 0) {
+      // Host rock: A stays black (matches scene background); B paints matrix.
+      rgbaA[off] = 0; rgbaA[off + 1] = 0; rgbaA[off + 2] = 0; rgbaA[off + 3] = 255
+      if (experimentalOn) paintHostRock(cx, cy, rgbaB, off)
+      else { rgbaB[off] = 0; rgbaB[off + 1] = 0; rgbaB[off + 2] = 0; rgbaB[off + 3] = 255 }
+      continue
+    }
+    const seed = seedsMap.get(seedId)!
+    const tilt = tiltCache.get(seedId)!
     const dx = (cx - seed.x) * INV_SCALE
     const dy = (cy - seed.y) * INV_SCALE
     const wallDistCells = (wallDist[i] / 3) * INV_SCALE
     const cavityMax = ((seedMaxWallDist.get(seedId) ?? 0) / 3) * INV_SCALE
     const axis0 = seed.axes[0] ?? 0
-    const off = i * 4
+    // Cavity cells render identically in A and B — experiment only
+    // affects the host-rock matrix.
     computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaA, rgbaA, off, cavityMax, false)
-    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaB, rgbaB, off, cavityMax, values.parity ? false : true)
+    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaB, rgbaB, off, cavityMax, false)
     if (septum[i]) {
       rgbaA[off] = SEPTUM[0]; rgbaA[off + 1] = SEPTUM[1]; rgbaA[off + 2] = SEPTUM[2]; rgbaA[off + 3] = 255
       rgbaB[off] = SEPTUM[0]; rgbaB[off + 1] = SEPTUM[1]; rgbaB[off + 2] = SEPTUM[2]; rgbaB[off + 3] = 255

@@ -30,7 +30,12 @@ export function partitionCavities(
   W: number,
   H: number,
   noiseScale: number,
-  warpStrength: number
+  warpStrength: number,
+  /** Number of fBM octaves for the cavity warp. 1 = gentle single-
+   *  frequency lobe (default — smooth ellipsoids). 2+ adds smaller-
+   *  scale lumps + notches on top of the base lobe, pushing the
+   *  outline from "oval pebble" toward "irregular rock". */
+  warpOctaves: number = 1
 ): CavityPartitionResult {
   const N = W * H
   const gridData = new Uint16Array(N)
@@ -93,13 +98,20 @@ export function partitionCavities(
         // Cheap pre-filter: well outside even with warp slack.
         if (d2 > c.rMax2 * 1.6) continue
         const d = Math.sqrt(d2)
-        // Single low-frequency warp — produces gentle large-scale
-        // lobes (kidney shapes) without sub-shell-width chatter that
-        // would punch holes through the dark Mn rim.
-        const ns = noiseScale
-        const nx = rdx * ns + seed.noiseOffsetX
-        const ny = rdy * ns + seed.noiseOffsetY
-        const warp = (valueNoise(nx, ny) - 0.5)
+        // fBM warp. With warpOctaves=1 this produces the historical
+        // gentle single-frequency lobe. With warpOctaves>1 it layers
+        // smaller-scale lumps + notches on top, giving an irregular
+        // pebble outline closer to real agate specimens.
+        let wx = rdx * noiseScale + seed.noiseOffsetX
+        let wy = rdy * noiseScale + seed.noiseOffsetY
+        let warp = 0
+        let amp = 1
+        for (let oi = 0; oi < warpOctaves; oi++) {
+          warp += amp * (valueNoise(wx, wy) - 0.5)
+          amp *= 0.55
+          wx *= 2
+          wy *= 2
+        }
         const warped = d + warp * c.rMax * warpStrength
         if (warped > c.rMax) continue
         if (warped < bestDist) {
