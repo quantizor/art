@@ -405,14 +405,54 @@ export function computeColorWallBased(
     const bandEnd = cumulative[bandIdx]
     const span = bandEnd - bandStart
     if (span > 0) {
+      // Gradient-group detection — consecutive bands with near-identical
+      // (L, C, H) represent the same chemistry laid down across multiple
+      // deposition cycles. A per-band gradient would sawtooth (each
+      // layer resets outer→inner); real agate shows ONE continuous fade
+      // across the whole run. Walk both directions while the neighbour's
+      // colour matches, then compute position-within-group instead of
+      // position-within-band. getBandColor is map-cached so each walk
+      // is ~O(group size) with ~map-lookup cost.
+      const L_CLOSE = 0.06
+      const C_CLOSE = 0.04
+      const H_CLOSE = 15
+      let gStartIdx = bandIdx
+      let gEndIdx = bandIdx
+      const curL = band.L, curC = band.C, curH = band.H
+      const hueMatch = (h1: number, c1: number, h2: number, c2: number): boolean => {
+        if (c1 < 0.015 || c2 < 0.015) return true // near-neutral, hue irrelevant
+        let d = h1 - h2
+        if (d > 180) d -= 360
+        else if (d < -180) d += 360
+        return Math.abs(d) < H_CLOSE
+      }
+      // Walk outward (toward band 0 / wall).
+      while (gStartIdx > 1) {
+        const prev = currentStrategy.getBandColor(gStartIdx - 1, hueKey, seedId, baseLightness, saturation)
+        if (Math.abs(prev.L - curL) < L_CLOSE && Math.abs(prev.C - curC) < C_CLOSE && hueMatch(prev.H, prev.C, curH, curC)) {
+          gStartIdx--
+        } else break
+      }
+      // Walk inward (toward centre).
+      while (gEndIdx < MAX_BANDS - 1) {
+        const next = currentStrategy.getBandColor(gEndIdx + 1, hueKey, seedId, baseLightness, saturation)
+        if (Math.abs(next.L - curL) < L_CLOSE && Math.abs(next.C - curC) < C_CLOSE && hueMatch(next.H, next.C, curH, curC)) {
+          gEndIdx++
+        } else break
+      }
+      const groupStart = gStartIdx > 0 ? cumulative[gStartIdx - 1] : 0
+      const groupEnd = cumulative[gEndIdx]
+      const groupSpan = groupEnd - groupStart
+
       // A: gradient uses UNWARPED wall distance so the fBM band-warp
       // can't imprint itself as tangent hatch inside a fat band.
       // `rawDist` is a smooth radial scalar field (wall distance only),
-      // so `(rawDist - bandStart) / span` is purely radial.
-      const rawCellsFromOuter = rawDist - bandStart
-      const pRaw = rawCellsFromOuter / span
+      // so `(rawDist - groupStart) / groupSpan` is purely radial and
+      // continuous across adjacent same-family bands.
+      const rawCellsFromOuter = rawDist - groupStart
+      const pRaw = groupSpan > 0 ? rawCellsFromOuter / groupSpan : 0
       const pcRaw = pRaw < 0 ? 0 : pRaw > 1 ? 1 : pRaw
-      const widthFactor = Math.min(2.5, Math.sqrt(Math.max(1, span / 5)))
+      const widthFactor = Math.min(2.5, Math.sqrt(Math.max(1, groupSpan / 5)))
       const base = L > 0.6 ? -0.040 : L < 0.3 ? 0.018 : -0.028
       L += base * (pcRaw - 0.5) * 2 * widthFactor
 
