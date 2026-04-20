@@ -87,6 +87,79 @@ export function getActiveProfile(): CrystalProfile {
 /** Max bands we precompute (covers distances up to MAX_BANDS * maxBandWidth) */
 const MAX_BANDS = 512
 
+// ─── Band-group cache (per hueKey+seedId) ─────────────────────
+// For the enhanced intra-band gradient, consecutive same-family
+// bands must be treated as one continuous deposit. Walking both
+// directions per pixel costs ~10 extra getBandColor calls per cell;
+// precomputing the group extents once per seed turns each lookup
+// into a Uint16Array read. Cleared alongside the width cache in
+// invalidateBandCache().
+const groupStartCache: Map<number, Uint16Array> = new Map()
+const groupEndCache: Map<number, Uint16Array> = new Map()
+
+function seedGroupKey(hueKey: number, seedId: number): number {
+  return ((hueKey & 0xffff) << 16) | (seedId & 0xffff)
+}
+
+function getBandGroups(
+  hueKey: number, seedId: number,
+  baseLightness: number, saturation: number
+): { start: Uint16Array; end: Uint16Array } {
+  const key = seedGroupKey(hueKey, seedId)
+  const cachedStart = groupStartCache.get(key)
+  if (cachedStart) {
+    return { start: cachedStart, end: groupEndCache.get(key)! }
+  }
+  const start = new Uint16Array(MAX_BANDS)
+  const end = new Uint16Array(MAX_BANDS)
+  const L_CLOSE = 0.06
+  const C_CLOSE = 0.04
+  const H_CLOSE = 15
+  // Band 0 is the Mn/host-rock shell — mineralogically distinct from
+  // any band 1+ chemistry, so never absorb it into a group.
+  start[0] = 0
+  end[0] = 0
+  if (MAX_BANDS > 1) {
+    start[1] = 1
+    // Forward pass over bands 2..N: groupStart[i] = first band in i's run.
+    let curStart = 1
+    let prev = currentStrategy.getBandColor(1, hueKey, seedId, baseLightness, saturation)
+    for (let i = 2; i < MAX_BANDS; i++) {
+      const c = currentStrategy.getBandColor(i, hueKey, seedId, baseLightness, saturation)
+      let same = Math.abs(prev.L - c.L) < L_CLOSE && Math.abs(prev.C - c.C) < C_CLOSE
+      if (same && prev.C >= 0.015 && c.C >= 0.015) {
+        let d = prev.H - c.H
+        if (d > 180) d -= 360
+        else if (d < -180) d += 360
+        if (Math.abs(d) >= H_CLOSE) same = false
+      }
+      if (!same) curStart = i
+      start[i] = curStart
+      prev = c
+    }
+    // Backward pass over bands N..1: groupEnd[i] = last band in i's run.
+    end[MAX_BANDS - 1] = MAX_BANDS - 1
+    let curEnd = MAX_BANDS - 1
+    prev = currentStrategy.getBandColor(MAX_BANDS - 1, hueKey, seedId, baseLightness, saturation)
+    for (let i = MAX_BANDS - 2; i >= 1; i--) {
+      const c = currentStrategy.getBandColor(i, hueKey, seedId, baseLightness, saturation)
+      let same = Math.abs(c.L - prev.L) < L_CLOSE && Math.abs(c.C - prev.C) < C_CLOSE
+      if (same && c.C >= 0.015 && prev.C >= 0.015) {
+        let d = c.H - prev.H
+        if (d > 180) d -= 360
+        else if (d < -180) d += 360
+        if (Math.abs(d) >= H_CLOSE) same = false
+      }
+      if (!same) curEnd = i
+      end[i] = curEnd
+      prev = c
+    }
+  }
+  groupStartCache.set(key, start)
+  groupEndCache.set(key, end)
+  return { start, end }
+}
+
 /** Cache key → cumulative width array. Evicted when a new palette is set. */
 let bandCacheKey = -1
 let bandCacheCumulative: Float64Array | null = null
@@ -416,41 +489,13 @@ export function computeColorWallBased(
     const bandEnd = cumulative[bandIdx]
     const span = bandEnd - bandStart
     if (span > 0) {
-      // Gradient-group detection — consecutive bands with near-identical
-      // (L, C, H) represent the same chemistry laid down across multiple
-      // deposition cycles. A per-band gradient would sawtooth (each
-      // layer resets outer→inner); real agate shows ONE continuous fade
-      // across the whole run. Walk both directions while the neighbour's
-      // colour matches, then compute position-within-group instead of
-      // position-within-band. getBandColor is map-cached so each walk
-      // is ~O(group size) with ~map-lookup cost.
-      const L_CLOSE = 0.06
-      const C_CLOSE = 0.04
-      const H_CLOSE = 15
-      let gStartIdx = bandIdx
-      let gEndIdx = bandIdx
-      const curL = band.L, curC = band.C, curH = band.H
-      const hueMatch = (h1: number, c1: number, h2: number, c2: number): boolean => {
-        if (c1 < 0.015 || c2 < 0.015) return true // near-neutral, hue irrelevant
-        let d = h1 - h2
-        if (d > 180) d -= 360
-        else if (d < -180) d += 360
-        return Math.abs(d) < H_CLOSE
-      }
-      // Walk outward (toward band 0 / wall).
-      while (gStartIdx > 1) {
-        const prev = currentStrategy.getBandColor(gStartIdx - 1, hueKey, seedId, baseLightness, saturation)
-        if (Math.abs(prev.L - curL) < L_CLOSE && Math.abs(prev.C - curC) < C_CLOSE && hueMatch(prev.H, prev.C, curH, curC)) {
-          gStartIdx--
-        } else break
-      }
-      // Walk inward (toward centre).
-      while (gEndIdx < MAX_BANDS - 1) {
-        const next = currentStrategy.getBandColor(gEndIdx + 1, hueKey, seedId, baseLightness, saturation)
-        if (Math.abs(next.L - curL) < L_CLOSE && Math.abs(next.C - curC) < C_CLOSE && hueMatch(next.H, next.C, curH, curC)) {
-          gEndIdx++
-        } else break
-      }
+      // Gradient-group lookup — consecutive same-family bands share one
+      // continuous radial gradient instead of sawtoothing per-band.
+      // Precomputed per (hueKey, seedId) so the per-pixel cost is two
+      // Uint16Array reads regardless of group size.
+      const groups = getBandGroups(hueKey, seedId, baseLightness, saturation)
+      const gStartIdx = groups.start[bandIdx]
+      const gEndIdx = groups.end[bandIdx]
       const groupStart = gStartIdx > 0 ? cumulative[gStartIdx - 1] : 0
       const groupEnd = cumulative[gEndIdx]
       const groupSpan = groupEnd - groupStart
@@ -681,5 +726,7 @@ export function computeColorWallBased(
 export function invalidateBandCache(): void {
   bandCacheKey = -1
   bandCacheCumulative = null
+  groupStartCache.clear()
+  groupEndCache.clear()
   currentStrategy.reset()
 }
