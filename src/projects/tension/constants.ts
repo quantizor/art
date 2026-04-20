@@ -29,9 +29,14 @@ export const BASE_GRID_SIZE = 1600
 /** Letterbox bar height: 2 × h-20 (5rem = 80px at default 16px base) */
 const LETTERBOX_TOTAL_PX = 160
 
-/** Visible canvas aspect ratio (screen minus letterbox bars) */
-const screenW = typeof window !== 'undefined' ? window.innerWidth : 1920
-const screenH = typeof window !== 'undefined' ? Math.max(window.innerHeight - LETTERBOX_TOTAL_PX, 400) : 920
+/** Visible canvas aspect ratio (screen minus letterbox bars). Zero-dim
+ *  viewports (hydration flash, hidden iframes, SSR edge cases) fall
+ *  back to a sane desktop aspect so Uint8Array allocation doesn't
+ *  explode on Infinity. */
+const rawScreenW = typeof window !== 'undefined' ? window.innerWidth : 1920
+const rawScreenH = typeof window !== 'undefined' ? window.innerHeight - LETTERBOX_TOTAL_PX : 920
+const screenW = rawScreenW > 0 ? rawScreenW : 1920
+const screenH = Math.max(rawScreenH, 400)
 const CANVAS_ASPECT = screenW / screenH
 
 /** Grid width in cells (DPI-scaled) */

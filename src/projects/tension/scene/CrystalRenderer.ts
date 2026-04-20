@@ -69,6 +69,22 @@ export class CrystalRenderer {
   private revealColorParams: ColorParams | null = null
   private revealColors: Uint8Array | null = null
   /**
+   * Dev-only enhanced-shading color buffer. Populated alongside
+   * `revealColors` when `import.meta.env.DEV` is true so the control
+   * panel's shading A/B slider can lerp between the two on the fly.
+   * Null in production builds.
+   */
+  private revealColorsEnhanced: Uint8Array | null = null
+  /**
+   * Onion-skin wipe position (0..1) in normalized grid X. Cells with
+   * `cx / W < onionSplit` draw from the classic buffer; cells beyond
+   * the split draw from the enhanced buffer. Default 0.5 → half-and-half.
+   * Dev-only; in production only the classic buffer exists and this is
+   * ignored. Changing this repaints every already-revealed cell without
+   * re-running the simulation.
+   */
+  private onionSplit = 0.5
+  /**
    * Preserved prior-nodule reveal order, kept live through the
    * reset→re-init boundary so the dissolve→growing transition can
    * cross-fade sparkles between the old and new cell sets.
@@ -406,6 +422,13 @@ export class CrystalRenderer {
     } else {
       this.revealColors.fill(0)
     }
+    if (import.meta.env.DEV) {
+      if (!this.revealColorsEnhanced || this.revealColorsEnhanced.length !== N * 4) {
+        this.revealColorsEnhanced = new Uint8Array(N * 4)
+      } else {
+        this.revealColorsEnhanced.fill(0)
+      }
+    }
     this.precomputeIdx = 0
     this.precomputeDone = false
 
@@ -440,7 +463,11 @@ export class CrystalRenderer {
     const W = GRID_WIDTH
     const invScale = 1 / GRID_SCALE
     const N = grid.length
-    const end = Math.min(this.precomputeIdx + count, N)
+    const rcEnh = this.revealColorsEnhanced
+    // Each cell does 2× the work when the dev A/B buffer exists.
+    // Halve the chunk so the caller's per-frame CPU budget holds.
+    const effectiveCount = rcEnh ? count >> 1 : count
+    const end = Math.min(this.precomputeIdx + effectiveCount, N)
     const septum = this.interSeedMask
     // Septum colour — warm very-dark (OKLCH-ish L≈0.13, C≈0.012, H≈25).
     // Hardcoded byte values so we avoid the OKLCH→sRGB conversion per
@@ -463,24 +490,34 @@ export class CrystalRenderer {
       const dy = (cy - seed.y) * invScale
       const wallDistCells = (wallDist[i] / 3) * invScale
       const cavityMax = ((this.seedMaxWallDist.get(seedId) ?? 0) / 3) * invScale
+      const axis0 = seed.axes[0] ?? 0
+      const off = i * 4
       computeColorWallBased(
         dx, dy, wallDistCells,
-        colorParams,
-        seed.axes[0] ?? 0,
-        tilt,
-        seedId,
-        rc, rc, i * 4,
-        cavityMax
+        colorParams, axis0, tilt, seedId,
+        rc, rc, off, cavityMax, false
       )
+      if (rcEnh) {
+        computeColorWallBased(
+          dx, dy, wallDistCells,
+          colorParams, axis0, tilt, seedId,
+          rcEnh, rcEnh, off, cavityMax, true
+        )
+      }
       // Override inter-seed boundary cells with the host-rock septum.
       // Models the physical rock between adjacent nodules, which stays
       // visible regardless of whether the specimen rolled an Mn shell.
       if (septum && septum[i]) {
-        const off = i * 4
         rc[off] = SEPTUM_R
         rc[off + 1] = SEPTUM_G
         rc[off + 2] = SEPTUM_B
         rc[off + 3] = 255
+        if (rcEnh) {
+          rcEnh[off] = SEPTUM_R
+          rcEnh[off + 1] = SEPTUM_G
+          rcEnh[off + 2] = SEPTUM_B
+          rcEnh[off + 3] = 255
+        }
       }
     }
 
@@ -885,6 +922,10 @@ export class CrystalRenderer {
     const tex = this.textureData
     const base = this.baseTextureData
     const endCursor = Math.min(this.revealCursor + count, order.length)
+    const rcEnh = this.revealColorsEnhanced
+    // Onion-skin split in absolute cell columns. Cells left of the
+    // split read from classic, cells right read from enhanced.
+    const splitCx = rcEnh ? this.onionSplit * W : Infinity
 
     for (let k = this.revealCursor; k < endCursor; k++) {
       const idx = order[k]
@@ -896,14 +937,20 @@ export class CrystalRenderer {
       const texY = H - 1 - cy
       const texOff = (texY * W + cx) * 4
       const srcOff = idx * 4
-      tex[texOff] = rc[srcOff]
-      tex[texOff + 1] = rc[srcOff + 1]
-      tex[texOff + 2] = rc[srcOff + 2]
-      tex[texOff + 3] = rc[srcOff + 3]
-      base[texOff] = rc[srcOff]
-      base[texOff + 1] = rc[srcOff + 1]
-      base[texOff + 2] = rc[srcOff + 2]
-      base[texOff + 3] = rc[srcOff + 3]
+      const useEnhanced = rcEnh && cx >= splitCx
+      const src = useEnhanced ? rcEnh : rc
+      const r = src[srcOff]
+      const g = src[srcOff + 1]
+      const b = src[srcOff + 2]
+      const a = src[srcOff + 3]
+      tex[texOff] = r
+      tex[texOff + 1] = g
+      tex[texOff + 2] = b
+      tex[texOff + 3] = a
+      base[texOff] = r
+      base[texOff + 1] = g
+      base[texOff + 2] = b
+      base[texOff + 3] = a
 
       // Incremental boundary tracking for post-reveal strain blending.
       const minX = cx > 0 ? 1 : 0
@@ -919,6 +966,117 @@ export class CrystalRenderer {
     this.revealCursor = endCursor
     this.particleCount = endCursor
     this.dirty = true
+  }
+
+  /**
+   * Dev-only: move the onion-skin wipe (0..1 normalized canvas X) and
+   * repaint every already-revealed cell accordingly. Cells left of the
+   * split show classic shading, cells right show enhanced. No-op in
+   * production where the enhanced buffer is never allocated.
+   */
+  setOnionSplit(v: number): void {
+    const clamped = v < 0 ? 0 : v > 1 ? 1 : v
+    if (clamped === this.onionSplit) return
+    this.onionSplit = clamped
+    const rcEnh = this.revealColorsEnhanced
+    const rc = this.revealColors
+    const order = this.revealOrder
+    const grid = this.gridData
+    if (!rcEnh || !rc || !order || !grid) return
+
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    const tex = this.textureData
+    const base = this.baseTextureData
+    const splitCx = clamped * W
+    const cursorEnd = this.revealCursor
+
+    for (let k = 0; k < cursorEnd; k++) {
+      const idx = order[k]
+      if (grid[idx] === 0) continue
+      const cy = (idx / W) | 0
+      const cx = idx - cy * W
+      const texY = H - 1 - cy
+      const texOff = (texY * W + cx) * 4
+      const srcOff = idx * 4
+      const src = cx >= splitCx ? rcEnh : rc
+      tex[texOff] = src[srcOff]
+      tex[texOff + 1] = src[srcOff + 1]
+      tex[texOff + 2] = src[srcOff + 2]
+      tex[texOff + 3] = src[srcOff + 3]
+      base[texOff] = src[srcOff]
+      base[texOff + 1] = src[srcOff + 1]
+      base[texOff + 2] = src[srcOff + 2]
+      base[texOff + 3] = src[srcOff + 3]
+    }
+    this.dirty = true
+  }
+
+  /**
+   * Dev-only: export the fully-revealed specimen as two lossless PNGs,
+   * one per shading buffer (classic + enhanced). Built from the raw
+   * per-cell buffers via an OffscreenCanvas so neither capture touches
+   * the visible Three.js canvas or user-facing state.
+   *
+   * Returns null if either buffer is missing (not in dev, or reveal
+   * hasn't completed yet).
+   */
+  async exportShadingPair(): Promise<{ classic: string; enhanced: string } | null> {
+    const rc = this.revealColors
+    const rcEnh = this.revealColorsEnhanced
+    const order = this.revealOrder
+    const grid = this.gridData
+    if (!rc || !rcEnh || !order || !grid) return null
+
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    const septum = this.interSeedMask
+    const SEPTUM_R = 26, SEPTUM_G = 22, SEPTUM_B = 18
+
+    const buildImage = (src: Uint8Array): ImageData => {
+      const img = new ImageData(W, H)
+      const out = img.data
+      for (let k = 0; k < order.length; k++) {
+        const idx = order[k]
+        if (grid[idx] === 0) continue
+        const cy = (idx / W) | 0
+        const cx = idx - cy * W
+        const texY = H - 1 - cy
+        const texOff = (texY * W + cx) * 4
+        if (septum && septum[idx]) {
+          out[texOff] = SEPTUM_R
+          out[texOff + 1] = SEPTUM_G
+          out[texOff + 2] = SEPTUM_B
+          out[texOff + 3] = 255
+        } else {
+          const srcOff = idx * 4
+          out[texOff] = src[srcOff]
+          out[texOff + 1] = src[srcOff + 1]
+          out[texOff + 2] = src[srcOff + 2]
+          out[texOff + 3] = src[srcOff + 3]
+        }
+      }
+      return img
+    }
+
+    const toPng = async (imgData: ImageData): Promise<string> => {
+      const oc = new OffscreenCanvas(W, H)
+      const ctx = oc.getContext('2d')
+      if (!ctx) throw new Error('OffscreenCanvas 2d context unavailable')
+      ctx.putImageData(imgData, 0, 0)
+      const blob = await oc.convertToBlob({ type: 'image/png' })
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(blob)
+      })
+    }
+
+    return {
+      classic: await toPng(buildImage(rc)),
+      enhanced: await toPng(buildImage(rcEnh)),
+    }
   }
 
   /** Reset the texture to fully transparent (black) */

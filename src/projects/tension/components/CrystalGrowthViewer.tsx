@@ -36,6 +36,7 @@ import type { CrystalProfile, SimulationParams, ColorParams, SimulationPhase } f
 
 const STORAGE_KEYS = {
   variant: 'tension:variant',
+  onionSplit: 'tension:onionSplit',
 } as const
 
 function loadPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
@@ -87,6 +88,86 @@ function randomSimParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.ra
 }
 
 
+/**
+ * Dev-only draggable vertical divider over the canvas. Left of the line
+ * shows classic shading, right shows enhanced. The actual wipe is
+ * applied in the renderer; this component only emits the normalized
+ * split position (0..1) via pointer events.
+ */
+function OnionSkinHandle({
+  value,
+  onChange,
+}: {
+  value: number
+  onChange: (v: number) => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const draggingRef = useRef(false)
+
+  const updateFromEvent = useCallback((clientX: number) => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const v = (clientX - rect.left) / rect.width
+    onChange(v < 0 ? 0 : v > 1 ? 1 : v)
+  }, [onChange])
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    draggingRef.current = true
+    e.currentTarget.setPointerCapture(e.pointerId)
+    updateFromEvent(e.clientX)
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!draggingRef.current) return
+    updateFromEvent(e.clientX)
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    draggingRef.current = false
+    e.currentTarget.releasePointerCapture(e.pointerId)
+  }
+
+  const pct = `${value * 100}%`
+
+  return (
+    <div
+      ref={ref}
+      className="absolute inset-0 pointer-events-none select-none"
+      aria-label="Onion-skin comparison handle"
+    >
+      {/* Vertical divider line */}
+      <div
+        className="absolute top-0 bottom-0 w-px bg-white/80 mix-blend-difference pointer-events-none"
+        style={{ left: pct, transform: 'translateX(-0.5px)' }}
+      />
+      {/* Endpoint labels */}
+      <div className="absolute top-4 left-4 text-[10px] uppercase tracking-widest font-mono text-white/70 mix-blend-difference pointer-events-none">
+        ← classic
+      </div>
+      <div className="absolute top-4 right-4 text-[10px] uppercase tracking-widest font-mono text-white/70 mix-blend-difference pointer-events-none">
+        enhanced →
+      </div>
+      {/* Drag hit area — wider than the visible line so it's easy to grab */}
+      <div
+        className="absolute top-0 bottom-0 w-6 cursor-ew-resize pointer-events-auto"
+        style={{ left: pct, transform: 'translateX(-50%)' }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {/* Grip circle */}
+        <div
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 border border-black/30 shadow-lg flex items-center justify-center text-black text-xs"
+          aria-hidden
+        >
+          ‹›
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function CrystalGrowthViewer() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRef = useRef<SceneManager | null>(null)
@@ -123,8 +204,56 @@ export function CrystalGrowthViewer() {
   const [variant, setVariant] = useState<VariantPreset>(
     () => loadPref<VariantPreset>(STORAGE_KEYS.variant, 'random', VARIANT_OPTIONS)
   )
+  // Dev-only onion-skin wipe position (0 = everything enhanced, 1 =
+  // everything classic, 0.5 = split at centre). Persisted so the
+  // iteration position survives reloads. Always 0.5 default in prod
+  // (the renderer ignores it there).
+  const [onionSplit, setOnionSplit] = useState<number>(() => {
+    if (typeof window === 'undefined' || !import.meta.env.DEV) return 0.5
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEYS.onionSplit)
+      const n = raw == null ? 0.5 : Number(raw)
+      return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5
+    } catch {
+      return 0.5
+    }
+  })
 
   useEffect(() => { savePref(STORAGE_KEYS.variant, variant) }, [variant])
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    savePref(STORAGE_KEYS.onionSplit, String(onionSplit))
+    const r = rendererRef.current
+    if (!r) return
+    r.setOnionSplit(onionSplit)
+    // Post-reveal the animation loop is idle, so the re-paint won't
+    // reach the GPU unless we push it manually.
+    r.flush()
+    sceneRef.current?.render()
+  }, [onionSplit])
+
+  // Dev-only: on reveal-complete, dump lossless PNGs of both shading
+  // buffers so the A/B comparison can be inspected outside the preview
+  // harness. Overwrites the same two paths every generation.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const onComplete = async () => {
+      const pair = await rendererRef.current?.exportShadingPair()
+      if (!pair) return
+      const post = (name: string, dataUrl: string) =>
+        fetch('/__snapshot', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name, dataUrl }),
+        }).catch(() => { /* dev tool — silent */ })
+      await Promise.all([
+        post('tension-a-result', pair.classic),
+        post('tension-b-result', pair.enhanced),
+      ])
+    }
+    window.addEventListener('tension:reveal-complete', onComplete)
+    return () => window.removeEventListener('tension:reveal-complete', onComplete)
+  }, [])
 
   // Stable refs for animation loop
   const phaseRef = useRef(phase)
@@ -183,6 +312,7 @@ export function CrystalGrowthViewer() {
 
     const crystalRenderer = new CrystalRenderer(scene.scene, MAX_PARTICLES)
     rendererRef.current = crystalRenderer
+    if (import.meta.env.DEV) crystalRenderer.setOnionSplit(onionSplit)
 
     const sim = new FloodFillSimulation()
     simRef.current = sim
@@ -499,11 +629,16 @@ export function CrystalGrowthViewer() {
         />
       }
     >
-      <canvas
-        ref={canvasRef}
-        className="w-full h-full block"
-        title={phase === 'complete' ? 'Click the dice to generate a new design.' : undefined}
-      />
+      <div className="relative w-full h-full">
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full block"
+          title={phase === 'complete' ? 'Click the dice to generate a new design.' : undefined}
+        />
+        {import.meta.env.DEV && (
+          <OnionSkinHandle value={onionSplit} onChange={setOnionSplit} />
+        )}
+      </div>
     </ProjectShell>
   )
 }

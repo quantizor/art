@@ -118,7 +118,7 @@ export function ControlPanel({
         {/* Expandable controls — animated with max-height + opacity */}
         <div
           className={`overflow-hidden transition-all duration-300 ease-in-out ${
-            collapsed ? 'max-h-0 opacity-0' : 'max-h-[28rem] opacity-100'
+            collapsed ? 'max-h-0 opacity-0' : 'max-h-[40rem] opacity-100'
           }`}
         >
           <div className="bg-black/80 border border-[var(--color-border-default)] border-t-0 p-3 pt-3 flex flex-col gap-3">

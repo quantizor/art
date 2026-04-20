@@ -318,7 +318,11 @@ export function computeColorWallBased(
   offset: number,
   /** Per-cavity max wall distance (cells). Used to drive the central
    *  druse trigger when this cell is in the deepest 15% of the cavity. */
-  cavityMaxWallDist = 0
+  cavityMaxWallDist = 0,
+  /** Dev-only A/B toggle. When true, applies intra-band radial
+   *  translucency gradient + soft band-boundary lerp for a less
+   *  "cartoony" look. Classic mode (false) preserves existing output. */
+  enhancedShading = false
 ): void {
   const { bandWavelength, bandAmplitude, baseLightness, saturation, monoHue } = params
 
@@ -372,11 +376,9 @@ export function computeColorWallBased(
   let L = band.L
   let C = band.C
 
-  // Zonal fat-zone internal shading: the "single-feedback" expanse is
-  // one family across a fat band, but real Malawi shows gentle concentric
-  // L modulation within it — slightly brighter at the outer edge, fading
-  // darker as chemistry shifts toward the accent cluster.
-  if (isZonalLayout(hueKey) && bandIdx === 1) {
+  // Zonal fat-zone internal shading (classic mode only — enhanced mode's
+  // generalised gradient subsumes this case).
+  if (!enhancedShading && isZonalLayout(hueKey) && bandIdx === 1) {
     const bandStart = cumulative[0]
     const bandEnd = cumulative[1]
     const span = bandEnd - bandStart
@@ -384,6 +386,57 @@ export function computeColorWallBased(
       const t = (absDist - bandStart) / span // 0 at outer wall, 1 at inner
       const shade = 0.055 * (t - 0.5) // -0.028 at outer, +0.028 at inner
       L = L - shade // outer brighter, inner dimmer
+    }
+  }
+
+  // ── Enhanced shading (dev A/B) ───────────────────────────────
+  // Two techniques from real agate photography:
+  //   A. Intra-band radial translucency gradient — within each band, L
+  //      shifts slightly from outer edge to inner edge (light bands
+  //      dim inward, dark bands brighten inward). Reads as "seeing
+  //      into the translucent chalcedony". Amplitude scales with band
+  //      width (fat bands show more chemistry drift).
+  //   B. Soft band-boundary lerp — within ~0.7 cells of a band's outer
+  //      edge, blend toward the previous band. Kills the ink-outline
+  //      cartoon look at fortification boundaries. Skipped at bandIdx≤1
+  //      where rim contamination provides a more authentic fBM texture.
+  if (enhancedShading && bandIdx > 0) {
+    const bandStart = bandIdx > 0 ? cumulative[bandIdx - 1] : 0
+    const bandEnd = cumulative[bandIdx]
+    const span = bandEnd - bandStart
+    if (span > 0) {
+      // A: gradient uses UNWARPED wall distance so the fBM band-warp
+      // can't imprint itself as tangent hatch inside a fat band.
+      // `rawDist` is a smooth radial scalar field (wall distance only),
+      // so `(rawDist - bandStart) / span` is purely radial.
+      const rawCellsFromOuter = rawDist - bandStart
+      const pRaw = rawCellsFromOuter / span
+      const pcRaw = pRaw < 0 ? 0 : pRaw > 1 ? 1 : pRaw
+      const widthFactor = Math.min(2, Math.sqrt(Math.max(1, span / 5)))
+      const base = L > 0.6 ? -0.026 : L < 0.3 ? 0.012 : -0.018
+      L += base * (pcRaw - 0.5) * 2 * widthFactor
+
+      // B: soft outer-edge lerp uses the WARPED position because that's
+      // where the visible band boundary actually sits. Skip bandIdx===1
+      // (rim block handles it with ragged fBM fingers).
+      if (bandIdx >= 2) {
+        const cellsFromOuter = absDist - bandStart
+        const EDGE_CELLS = 0.7
+        const edgeWindow = Math.min(EDGE_CELLS, span * 0.5)
+        if (cellsFromOuter < edgeWindow) {
+          const prev = currentStrategy.getBandColor(bandIdx - 1, hueKey, seedId, baseLightness, saturation)
+          const t = cellsFromOuter / edgeWindow
+          const w = 0.5 * (1 - t) // 50% at boundary, 0% at edge of window
+          L = L + (prev.L - L) * w
+          C = C + (prev.C - C) * w
+          if (prev.C > 0.01 && C > 0.01) {
+            let dH = prev.H - H
+            if (dH > 180) dH -= 360
+            else if (dH < -180) dH += 360
+            H = H + dH * w
+          }
+        }
+      }
     }
   }
 
