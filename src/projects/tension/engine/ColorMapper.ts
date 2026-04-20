@@ -420,13 +420,13 @@ export function computeColorWallBased(
   const sinA = tiltData.sinOrient
   const rdx = dx * cosA - dy * sinA
   const rdy = dx * sinA + dy * cosA
-  // Smoother band wobble: reference agate photos show ~4-6 large
-  // undulations around the circumference with no fine ripples. Profile
-  // defaults (0.035 scale × 3 octaves) put the top octave at ~7-cell
-  // period, shorter than most bands → sub-band jitter. 2 octaves at
-  // 0.57× scale + 1.25× warp strength keeps amplitude range while
-  // removing the high-frequency chatter.
-  const ns = currentProfile.bandNoiseScale * 0.57
+  // Band wobble — reference agate photos show ~4-6 LARGE undulations
+  // around the circumference. Profile defaults (0.035 × 3 octaves)
+  // produce ~16+ small waves per revolution with fine sub-band
+  // chatter on top. Dropping to 2 octaves at 0.28× scale yields ~7
+  // longer-wavelength waves; keeping warp strength at 1.25× preserves
+  // visible peak displacement so each wobble reads clearly.
+  const ns = currentProfile.bandNoiseScale * 0.28
   let nx = rdx * ns + tiltData.noiseOffsetX
   let ny = rdy * ns + tiltData.noiseOffsetY
   const pwHL = bandPwHL
