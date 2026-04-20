@@ -512,18 +512,24 @@ export function computeColorWallBased(
       const base = L > 0.6 ? -0.040 : L < 0.3 ? 0.018 : -0.028
       L += base * (pcRaw - 0.5) * 2 * widthFactor
 
-      // C: low-frequency cloud modulation. 2D value noise at period
-      // ~125 cells imprints a specimen-scale warm/cool drift that
-      // crosses multiple bands coherently — real agate chemistry
-      // isn't uniform across a cavity. Frequency is well BELOW the
-      // narrowest band width so this never reads as tangent streaks
-      // within a single band. Amplitude kept small: ±2% L, ±12% C.
-      const cloudScale = 0.008
-      const cloudX = dx * cloudScale + tiltData.noiseOffsetX * 0.3
-      const cloudY = dy * cloudScale + tiltData.noiseOffsetY * 0.3
-      const cloudN = valueNoise(cloudX, cloudY) - 0.5
-      L += cloudN * 0.040
-      C = C * (1 + cloudN * 0.24)
+      // C: milky cloud modulation — 2-octave fBM. Reference agate
+      // photos (Malawi blue, green Brazil) show clear "silver wave"
+      // luminance drift across a translucent interior: one global
+      // warm↔cool shift spanning the whole specimen (low octave)
+      // plus medium-scale wisps inside fat bands (high octave).
+      // Amplitudes and periods calibrated to match the ~10% L
+      // spread observed in reference photographs. Both octaves live
+      // well below the narrowest band width so they never produce
+      // tangent streaks within a band.
+      const cloudX0 = dx * 0.005 + tiltData.noiseOffsetX * 0.3
+      const cloudY0 = dy * 0.005 + tiltData.noiseOffsetY * 0.3
+      const cloudLow = valueNoise(cloudX0, cloudY0) - 0.5
+      const cloudX1 = dx * 0.014 + tiltData.noiseOffsetX * 0.7
+      const cloudY1 = dy * 0.014 + tiltData.noiseOffsetY * 0.7
+      const cloudHi = valueNoise(cloudX1, cloudY1) - 0.5
+      const cloud = cloudLow * 0.065 + cloudHi * 0.035 // ±0.05 total L
+      L += cloud
+      C = C * (1 + (cloudLow + cloudHi) * 0.18)
       if (C < 0) C = 0
 
       // B: soft outer-edge lerp uses the WARPED position because that's
