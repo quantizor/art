@@ -4,9 +4,9 @@ Personal creative coding playground. A mix of generative art, GPU experiments, a
 
 ## what's in here
 
-### tension (crystal growth sim)
+### tension (agate cross-section generator)
 
-Real-time crystal growth simulation using diffusion-limited aggregation under polarized light. Three.js powered. `src/projects/tension/`
+Procedural generator for polished agate cross-sections. SDF cavity partition plus a wall-distance transform produce concentric fortification bands; a mineralogically-grounded OKLCH palette (chalcedony, iron earth, hematite, chlorite, and more) paints each band based on its radial depth. Three.js powered. `src/projects/tension/`
 
 ### brutalist design system
 

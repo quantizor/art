@@ -23,9 +23,21 @@ for _ in $(seq 1 30); do
   sleep 0.3
 done
 
+# Preserve hand-authored content (e.g. docs/research/) across the rebuild.
+PRESERVE_TMP="$(mktemp -d)"
+trap "kill $SERVER_PID 2>/dev/null || true; rm -rf \"$PRESERVE_TMP\"" EXIT
+for dir in research; do
+  [ -d "$DOCS/$dir" ] && cp -r "$DOCS/$dir" "$PRESERVE_TMP/"
+done
+
 # Clean and seed with static assets
 rm -rf "$DOCS"
 cp -r .output/public "$DOCS"
+
+# Restore preserved content
+for dir in research; do
+  [ -d "$PRESERVE_TMP/$dir" ] && cp -r "$PRESERVE_TMP/$dir" "$DOCS/"
+done
 
 # Prerender routes
 for route in / /projects/id1 /projects/tension /ui; do

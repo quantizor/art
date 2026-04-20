@@ -10,8 +10,8 @@ import type { ColorParams, SimulationParams } from './types'
 // DPI SCALING
 // ============================================
 
-/** Device pixel ratio, capped at 2 to limit memory (~56 MB at 2×) */
-const DPR = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1
+/** Full device pixel ratio — render at native screen resolution for crisp output. */
+const DPR = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1
 
 /** Scale factor from base (1024) grid to actual grid — all grid-space
  *  distances in the color/sim code use base-resolution units, and the
@@ -22,8 +22,9 @@ export const GRID_SCALE = DPR
 // GRID CONFIGURATION
 // ============================================
 
-/** Base grid width (before DPI scaling) */
-export const BASE_GRID_SIZE = 1024
+/** Base grid width (before DPI scaling) — high enough that cell edges
+ *  fall below visible-pixel resolution at native DPR. */
+export const BASE_GRID_SIZE = 1600
 
 /** Letterbox bar height: 2 × h-20 (5rem = 80px at default 16px base) */
 const LETTERBOX_TOTAL_PX = 160
@@ -49,9 +50,6 @@ export const RESOLUTION = 1
 /** Maximum aggregate particles before simulation stops (fill entire grid) */
 export const MAX_PARTICLES = GRID_WIDTH * GRID_HEIGHT
 
-/** Default walker batch size */
-export const DEFAULT_WALKER_COUNT = 2048
-
 /** Maximum seed count for slider range */
 export const MAX_SEED_COUNT = 48
 
@@ -60,20 +58,14 @@ export const SEED_MIN_DISTANCE = Math.round(50 * GRID_SCALE)
 
 /** Default simulation parameters */
 export const DEFAULT_SIM_PARAMS: SimulationParams = {
-  stepsPerFrame: 7200,
-  biasStrength: 0,
   axisCount: 3,
   seedCount: 12,
-  stepSize: 1.0,
-  walkerCount: DEFAULT_WALKER_COUNT,
-  killRadiusMultiplier: 2.5,
   facets: 0,
   aspectRatio: 1.15,
 }
 
-/** Default color parameters — neon vivid agate */
+/** Default color parameters */
 export const DEFAULT_COLOR_PARAMS: ColorParams = {
-  mode: 'agate',
   growthPattern: 'radial',
   bandWavelength: 14,
   bandAmplitude: 0.35,
@@ -86,8 +78,9 @@ export const DEFAULT_COLOR_PARAMS: ColorParams = {
 // RENDERING
 // ============================================
 
-/** Background color (near-black with slight blue tint) */
-export const BACKGROUND_COLOR = 0x050508
+/** Background color — pure black. The scene aesthetic frames each
+ *  agate cross-section as a polished specimen on a dark surface. */
+export const BACKGROUND_COLOR = 0x000000
 
 // ============================================
 // CAMERA

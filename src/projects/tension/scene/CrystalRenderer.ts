@@ -16,10 +16,10 @@
  */
 
 import * as THREE from 'three'
-import { computeColor, computeColorDirect, invalidateBandCache } from '../engine/ColorMapper'
+import { computeColorDirect, computeColorWallBased, invalidateBandCache, precomputeSeedTilt } from '../engine/ColorMapper'
 import type { SeedTiltData } from '../engine/ColorMapper'
-import { GRID_WIDTH, GRID_HEIGHT } from '../constants'
-import type { ColorParams } from '../types'
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SCALE } from '../constants'
+import type { ColorParams, Seed } from '../types'
 
 /** Screen blend strength at boundary cells */
 const BOUNDARY_BLEND = 0.45
@@ -53,6 +53,34 @@ export class CrystalRenderer {
 
   /** Grid data reference for boundary detection during addParticleDirect */
   private gridData: Uint16Array | null = null
+
+  /** Per-seed pastel placeholder colour cache (rgb packed into 3 bytes). */
+  private partitionColorCache: Map<number, [number, number, number]> = new Map()
+
+  /** Per-seed maximum wall distance — used by the druse-trigger heuristic. */
+  private seedMaxWallDist: Map<number, number> = new Map()
+
+  /** Indices of cells currently lit as sparkle dust (cleared next frame). */
+  private sparkleCells: Uint32Array = new Uint32Array(0)
+  private sparkleCount = 0
+
+  /** Cells sorted by wallDist ascending — the reveal order (inward). */
+  private revealOrder: Uint32Array | null = null
+  private revealCursor = 0
+  private revealWallDist: Uint16Array | null = null
+  private revealSeeds: Map<number, Seed> | null = null
+  private revealTiltCache: Map<number, SeedTiltData> = new Map()
+  private revealColorParams: ColorParams | null = null
+  private revealColors: Uint8Array | null = null
+  /**
+   * Preserved prior-nodule reveal order, kept live through the
+   * reset→re-init boundary so the dissolve→growing transition can
+   * cross-fade sparkles between the old and new cell sets.
+   */
+  private previousRevealOrder: Uint32Array | null = null
+  /** Walk pointer into the cell-order-independent (raw idx) precompute loop. */
+  private precomputeIdx = 0
+  private precomputeDone = false
 
   constructor(scene: THREE.Scene, _maxParticles: number) {
     const size = GRID_WIDTH * GRID_HEIGHT
@@ -179,43 +207,6 @@ export class CrystalRenderer {
         this.boundaryCandidates.add(idx + W + 1)
       }
     }
-
-    this.particleCount++
-    this.dirty = true
-  }
-
-  /** Write a crystal pixel into the texture buffer (legacy path) */
-  addParticle(
-    cx: number,
-    cy: number,
-    growthAngle: number,
-    distFromSeed: number,
-    _seedId: number,
-    colorParams: ColorParams,
-    seedOrientation?: number,
-    seedTilt?: number,
-    boundaryPressure?: number
-  ): void {
-    const rgb = computeColor(growthAngle, distFromSeed, colorParams, seedOrientation, seedTilt, boundaryPressure)
-
-    // DataTexture row 0 = bottom in OpenGL, grid row 0 = top -> flip Y
-    const texY = GRID_HEIGHT - 1 - cy
-    const offset = (texY * GRID_WIDTH + cx) * 4
-
-    const r = (rgb.r * 255) | 0
-    const g = (rgb.g * 255) | 0
-    const b = (rgb.b * 255) | 0
-
-    // Write to both display and base textures
-    this.textureData[offset] = r
-    this.textureData[offset + 1] = g
-    this.textureData[offset + 2] = b
-    this.textureData[offset + 3] = 255
-
-    this.baseTextureData[offset] = r
-    this.baseTextureData[offset + 1] = g
-    this.baseTextureData[offset + 2] = b
-    this.baseTextureData[offset + 3] = 255
 
     this.particleCount++
     this.dirty = true
@@ -385,6 +376,601 @@ export class CrystalRenderer {
     this.dirty = true
   }
 
+  /**
+   * Write a faint per-seed placeholder colour for a cell claimed during
+   * the silent partition phase. Lets the user see cavity territories
+   * expand in real time; gets overwritten during reveal.
+   */
+  addPartitionPixel(cx: number, cy: number, seedId: number): void {
+    if (cx < 0 || cx >= GRID_WIDTH || cy < 0 || cy >= GRID_HEIGHT) return
+    let rgb = this.partitionColorCache.get(seedId)
+    if (!rgb) {
+      // Deterministic low-chroma pastel per seed.
+      const h = ((seedId * 83 + 29) * 2654435761) >>> 0
+      const hue = h % 360
+      const hRad = (hue * Math.PI) / 180
+      const C = 0.04, L = 0.72
+      const a = C * Math.cos(hRad), b = C * Math.sin(hRad)
+      const l_ = L + 0.3963377774 * a + 0.2158037573 * b
+      const m_ = L - 0.1055613458 * a - 0.0638541728 * b
+      const s_ = L - 0.0894841775 * a - 1.2914855480 * b
+      const lc = l_ * l_ * l_, mc = m_ * m_ * m_, sc = s_ * s_ * s_
+      const rLin = +4.0767416621 * lc - 3.3077115913 * mc + 0.2309699292 * sc
+      const gLin = -1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc
+      const bLin = -0.0041960863 * lc - 0.7034186147 * mc + 1.7076147010 * sc
+      const toSrgb = (x: number) => x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055
+      const clip = (x: number) => x < 0 ? 0 : x > 1 ? 1 : x
+      rgb = [
+        (clip(toSrgb(rLin)) * 255) | 0,
+        (clip(toSrgb(gLin)) * 255) | 0,
+        (clip(toSrgb(bLin)) * 255) | 0,
+      ]
+      this.partitionColorCache.set(seedId, rgb)
+    }
+    const texY = GRID_HEIGHT - 1 - cy
+    const off = (texY * GRID_WIDTH + cx) * 4
+    this.textureData[off] = rgb[0]
+    this.textureData[off + 1] = rgb[1]
+    this.textureData[off + 2] = rgb[2]
+    this.textureData[off + 3] = 255
+    this.particleCount++
+    this.dirty = true
+  }
+
+  /**
+   * Prepare an inward reveal pass. Call after the voronoi partition +
+   * wall-distance transform are finished. Sorts every claimed cell by
+   * wallDist ascending (wall-first, centre-last) so advanceReveal can
+   * stream colours in deposition order.
+   */
+  prepareReveal(
+    gridData: Uint16Array,
+    wallDist: Uint16Array,
+    seeds: Map<number, Seed>,
+    colorParams: ColorParams
+  ): void {
+    const N = gridData.length
+    // Count claimed cells per wall-distance bucket.
+    let maxD = 0
+    let filled = 0
+    for (let i = 0; i < N; i++) {
+      if (gridData[i] !== 0) {
+        filled++
+        if (wallDist[i] > maxD) maxD = wallDist[i]
+      }
+    }
+    const buckets = new Uint32Array(maxD + 2)
+    for (let i = 0; i < N; i++) {
+      if (gridData[i] !== 0) buckets[wallDist[i]]++
+    }
+    // Prefix sums → offsets.
+    let acc = 0
+    for (let i = 0; i < buckets.length; i++) {
+      const c = buckets[i]
+      buckets[i] = acc
+      acc += c
+    }
+    const order = new Uint32Array(filled)
+    const cursor = new Uint32Array(buckets.length)
+    for (let i = 0; i < N; i++) {
+      if (gridData[i] === 0) continue
+      const d = wallDist[i]
+      order[buckets[d] + cursor[d]++] = i
+    }
+    // Per-seed max wallDist for druse-trigger heuristic (in cell units).
+    this.seedMaxWallDist.clear()
+    for (let i = 0; i < N; i++) {
+      const s = gridData[i]
+      if (s === 0) continue
+      const w = wallDist[i]
+      const cur = this.seedMaxWallDist.get(s) ?? 0
+      if (w > cur) this.seedMaxWallDist.set(s, w)
+    }
+
+    this.revealOrder = order
+    this.revealCursor = 0
+    this.revealWallDist = wallDist
+    this.revealSeeds = seeds
+    this.revealColorParams = colorParams
+    this.revealTiltCache.clear()
+    this.gridData = gridData
+
+    // Allocate the precompute buffer but leave it empty; caller pumps
+    // the precompute in chunks via precomputeChunk() so the main thread
+    // stays responsive (orb pulses smoothly, no jank).
+    if (!this.revealColors || this.revealColors.length !== N * 4) {
+      this.revealColors = new Uint8Array(N * 4)
+    } else {
+      this.revealColors.fill(0)
+    }
+    this.precomputeIdx = 0
+    this.precomputeDone = false
+
+    // Clear any prior colour in case we were re-used.
+    this.textureData.fill(0)
+    this.baseTextureData.fill(0)
+    this.boundaryCandidates.clear()
+    this.lastStrainedCount = 0
+    this.dirty = true
+  }
+
+  /** Number of cells remaining to reveal. */
+  revealRemaining(): number {
+    if (!this.revealOrder) return 0
+    return this.revealOrder.length - this.revealCursor
+  }
+
+  /**
+   * Process up to `count` cells of the color precompute. Returns true
+   * when the entire grid has been precomputed. Safe to call every
+   * frame during the growing phase — keeps the main thread responsive.
+   */
+  precomputeChunk(count: number): boolean {
+    if (this.precomputeDone) return true
+    const grid = this.gridData
+    const wallDist = this.revealWallDist
+    const seeds = this.revealSeeds
+    const colorParams = this.revealColorParams
+    const rc = this.revealColors
+    if (!grid || !wallDist || !seeds || !colorParams || !rc) return true
+
+    const W = GRID_WIDTH
+    const invScale = 1 / GRID_SCALE
+    const N = grid.length
+    const end = Math.min(this.precomputeIdx + count, N)
+
+    for (let i = this.precomputeIdx; i < end; i++) {
+      const seedId = grid[i]
+      if (seedId === 0) continue
+      const seed = seeds.get(seedId)
+      if (!seed) continue
+      let tilt = this.revealTiltCache.get(seedId)
+      if (!tilt) {
+        tilt = precomputeSeedTilt(seed)
+        this.revealTiltCache.set(seedId, tilt)
+      }
+      const cy = (i / W) | 0
+      const cx = i - cy * W
+      const dx = (cx - seed.x) * invScale
+      const dy = (cy - seed.y) * invScale
+      const wallDistCells = (wallDist[i] / 3) * invScale
+      const cavityMax = ((this.seedMaxWallDist.get(seedId) ?? 0) / 3) * invScale
+      computeColorWallBased(
+        dx, dy, wallDistCells,
+        colorParams,
+        seed.axes[0] ?? 0,
+        tilt,
+        rc, rc, i * 4,
+        cavityMax
+      )
+    }
+
+    this.precomputeIdx = end
+    if (end >= N) this.precomputeDone = true
+    return this.precomputeDone
+  }
+
+  /** True if all cell colours have been precomputed and reveal can begin. */
+  isPrecomputeDone(): boolean {
+    return this.precomputeDone
+  }
+
+  /**
+   * Animate a sparkle of bright pixels across cells that haven't been
+   * revealed yet — gives the cavity a "loading" twinkle while it fills.
+   * Each frame: clear last frame's sparkles, light up `count` new
+   * random unrevealed cells.
+   */
+  /**
+   * Pulsing orb of sparkles at canvas centre — shown during the growing
+   * phase between fade-out and reveal. Density and radius pulse with
+   * `phase` (0..1, typically a sin wave). Signals "working" without
+   * revealing any of the actual design yet.
+   */
+  /** Centres where growing-phase orbs should pulse. */
+  private orbCenters: readonly { x: number; y: number }[] = []
+
+  setOrbCenters(centers: readonly { x: number; y: number }[]): void {
+    this.orbCenters = centers
+  }
+
+  // Shared 3×3 gaussian kernel used by all particle phases.
+  private static readonly SPARKLE_KERNEL = [
+    0.28, 0.55, 0.28,
+    0.55, 1.00, 0.55,
+    0.28, 0.55, 0.28,
+  ]
+
+  /**
+   * Shared sparkle-drawing primitive. Picks `count` cell indices from
+   * [minIdx, maxIdx) of the reveal order (wall→centre) and splats a
+   * soft 3×3 blob at each. Max-blends into the texture so sparkles
+   * layer onto whatever's already there.
+   */
+  private splatSparkles(
+    count: number, minIdx: number, maxIdx: number, pulse: number
+  ): void {
+    this.splatSparklesFromOrder(this.revealOrder, count, minIdx, maxIdx, pulse)
+  }
+
+  /**
+   * Cheap shimmer primitive: given any cell-index order array and a
+   * window within it, splats `count` soft 3×3 sparkles at randomly-
+   * sampled cells. All particle phases use this — the only thing that
+   * varies between phases is the cell set (paint area) and density.
+   */
+  private splatSparklesFromOrder(
+    order: Uint32Array | null,
+    count: number,
+    minIdx: number,
+    maxIdx: number,
+    pulse: number
+  ): void {
+    if (!order || maxIdx <= minIdx || count <= 0) return
+    const tex = this.textureData
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    const kernel = CrystalRenderer.SPARKLE_KERNEL
+    const needed = this.sparkleCount + count * 9
+    if (this.sparkleCells.length < needed) {
+      const grown = new Uint32Array(Math.max(needed, this.sparkleCells.length * 2))
+      grown.set(this.sparkleCells.subarray(0, this.sparkleCount))
+      this.sparkleCells = grown
+    }
+    const range = maxIdx - minIdx
+    for (let i = 0; i < count; i++) {
+      const k = minIdx + ((Math.random() * range) | 0)
+      const idx = order[k]
+      const cy = (idx / W) | 0
+      const cx = idx - cy * W
+      const peak = 90 + ((Math.random() * 45) | 0) + ((pulse * 35) | 0)
+      this.splatSoft(cx, cy, peak, kernel, tex, W, H)
+    }
+  }
+
+  /**
+   * Restores tracked sparkle cells to baseTextureData rather than zero:
+   * cells revealed between sparkle splat and this restore would otherwise
+   * become black specks baked into the final reveal.
+   */
+  private clearSparkles(): void {
+    const tex = this.textureData
+    const base = this.baseTextureData
+    for (let i = 0; i < this.sparkleCount; i++) {
+      const off = this.sparkleCells[i]
+      tex[off] = base[off]
+      tex[off + 1] = base[off + 1]
+      tex[off + 2] = base[off + 2]
+      tex[off + 3] = base[off + 3]
+    }
+    this.sparkleCount = 0
+    this.dirty = true
+  }
+
+  restoreSparklesFromBase(): void {
+    this.clearSparkles()
+  }
+
+  /** Save the current reveal order so the next reset can cross-fade against it. */
+  capturePreviousRevealOrder(): void {
+    this.previousRevealOrder = this.revealOrder
+  }
+
+  /** Drop the saved previous reveal order (after cross-fade completes). */
+  clearPreviousRevealOrder(): void {
+    this.previousRevealOrder = null
+  }
+
+  hasPreviousRevealOrder(): boolean {
+    return this.previousRevealOrder !== null
+  }
+
+  /**
+   * Cross-fade sparkles between the previous and current cavities by
+   * physically lerping each sparkle's position from an old-cavity cell
+   * to a new-cavity cell. `t` 0→1 slides the whole cloud from the old
+   * shape to the new shape. Host-rock grid check is skipped during
+   * the morph since intermediate positions may fall outside both
+   * cavities; sparkleCells is still tracked so next frame clears them.
+   */
+  drawCrossfadeSparkles(count: number, pulse: number, t: number): void {
+    this.clearSparkles()
+    const prev = this.previousRevealOrder
+    const cur = this.revealOrder
+    const tt = t < 0 ? 0 : t > 1 ? 1 : t
+
+    // If only one side is present, both fall back to it. Always route
+    // through splatSoftNoGrid because sim.reset() clears gridData
+    // between dissolve and partition-worker return.
+    const prevSide = (prev && prev.length > 0) ? prev : (cur && cur.length > 0 ? cur : null)
+    const curSide = (cur && cur.length > 0) ? cur : (prev && prev.length > 0 ? prev : null)
+    if (!prevSide || !curSide) { this.dirty = true; return }
+
+    const tex = this.textureData
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    const kernel = CrystalRenderer.SPARKLE_KERNEL
+    if (this.sparkleCells.length < count * 9) {
+      this.sparkleCells = new Uint32Array(count * 9)
+    }
+
+    // Simultaneous paint: split the sparkle budget between the OLD
+    // cavity (fading) and the NEW cavity (emerging). A visible dissolve
+    // on one side happens alongside a visible materialise on the other
+    // so the lit-pixel count stays roughly constant through the
+    // transition — no sudden shrink even when the new cavity is much
+    // smaller than the old one.
+    const prevShare = (count * (1 - tt)) | 0
+    const curShare = count - prevShare
+
+    const drawSide = (side: Uint32Array, n: number, fade: number) => {
+      if (n <= 0) return
+      const peakBase = (90 * fade) | 0
+      const peakRange = (45 * fade) | 0
+      const peakPulse = (35 * fade) | 0
+      for (let i = 0; i < n; i++) {
+        const idx = side[(Math.random() * side.length) | 0]
+        const cy = (idx / W) | 0
+        const cx = idx - cy * W
+        const peak = peakBase + ((Math.random() * peakRange) | 0) + ((pulse * peakPulse) | 0)
+        this.splatSoftNoGrid(cx, cy, peak, kernel, tex, W, H)
+      }
+    }
+
+    // Old side fades from 1 → 0 across the crossfade; new side rises
+    // from 0 → 1. Peaks scale so the dissolving cavity softly dims
+    // rather than abruptly vanishing.
+    drawSide(prevSide, prevShare, 1 - tt * 0.6)
+    drawSide(curSide, curShare, 0.4 + tt * 0.6)
+
+    this.dirty = true
+  }
+
+  /** splatSoft variant that ignores gridData (for morph transitions). */
+  private splatSoftNoGrid(
+    cx: number, cy: number, peak: number,
+    kernel: number[], tex: Uint8Array, W: number, H: number
+  ): void {
+    for (let ky = 0; ky < 3; ky++) {
+      const py = cy + ky - 1
+      if (py < 0 || py >= H) continue
+      const texY = H - 1 - py
+      for (let kx = 0; kx < 3; kx++) {
+        const px = cx + kx - 1
+        if (px < 0 || px >= W) continue
+        const off = (texY * W + px) * 4
+        const v = (peak * kernel[ky * 3 + kx]) | 0
+        if (v > tex[off]) {
+          tex[off] = v
+          tex[off + 1] = v
+          tex[off + 2] = v
+          tex[off + 3] = 255
+          this.sparkleCells[this.sparkleCount++] = off
+        }
+      }
+    }
+  }
+
+  drawGrowthOrb(count: number, tween: number, pulse: number): void {
+    this.clearSparkles()
+    const order = this.revealOrder
+    if (order && order.length > 0) {
+      const t = tween < 0 ? 0 : tween > 1 ? 1 : tween
+      const minIdx = Math.floor((1 - t) * order.length)
+      this.splatSparkles(count, minIdx, order.length, pulse)
+    } else {
+      // Fallback before partition is ready — orbs at seed centres.
+      const W = GRID_WIDTH
+      const H = GRID_HEIGHT
+      const tex = this.textureData
+      const kernel = CrystalRenderer.SPARKLE_KERNEL
+      const centers = this.orbCenters.length > 0
+        ? this.orbCenters
+        : [{ x: W * 0.5, y: H * 0.5 }]
+      const minDim = Math.min(W, H)
+      const radius = minDim * (0.06 + 0.04 * pulse)
+      const perCenter = Math.max(1, Math.floor(count / centers.length))
+      if (this.sparkleCells.length < count * 9) {
+        this.sparkleCells = new Uint32Array(count * 9)
+      }
+      for (let c = 0; c < centers.length; c++) {
+        const { x: cx, y: cy } = centers[c]
+        for (let i = 0; i < perCenter; i++) {
+          const r = (Math.random() + Math.random()) * 0.5 * radius
+          const theta = Math.random() * Math.PI * 2
+          const px = (cx + Math.cos(theta) * r) | 0
+          const py = (cy + Math.sin(theta) * r) | 0
+          if (px < 0 || px >= W || py < 0 || py >= H) continue
+          const peak = 90 + ((Math.random() * 45) | 0) + ((pulse * 35) | 0)
+          this.splatSoft(px, py, peak, kernel, tex, W, H)
+        }
+      }
+    }
+    this.dirty = true
+  }
+
+  private fadeSource: Uint8Array | null = null
+
+  /** Snapshot the current design so the dissolve can crossfade from it. */
+  captureForDissolve(): void {
+    if (!this.fadeSource || this.fadeSource.length !== this.textureData.length) {
+      this.fadeSource = new Uint8Array(this.textureData.length)
+    }
+    this.fadeSource.set(this.textureData)
+    this.sparkleCount = 0
+  }
+
+  /**
+   * Per-cell stochastic dissolve: each cell has a stable hash-derived
+   * threshold. When `progress` crosses that threshold, the cell flips
+   * hard from design colour to black — so the design "eats away" in a
+   * scattered pattern rather than fading uniformly. Sparkle density
+   * ramps with progress. At progress=1 the canvas is a full sparkle
+   * field over a black cavity — the growing-phase start state, so
+   * handoff is pixel-continuous with no black frame in between.
+   */
+  drawParticleDissolve(progress: number, sparkleCount: number, pulse: number): void {
+    const tex = this.textureData
+    const src = this.fadeSource
+    const order = this.revealOrder
+    if (!src || !order) { this.dirty = true; return }
+
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    const p = progress < 0 ? 0 : progress > 1 ? 1 : progress
+
+    this.clearSparkles()
+
+    // Smoothstep the progress used for the design fade. Linear progress
+    // makes the dissolve feel front-heavy — the design disappears too
+    // fast at the start and drags at the end. Easing delays the bulk of
+    // the fade to the middle of the tween, where sparkle density is
+    // also at its peak, so sparkle has room to "take over" visually.
+    const pEased = p * p * (3 - 2 * p)
+
+    // Per-cell 2D hash → stable per-cell dissolve threshold. Mixing cx
+    // and cy through distinct primes before scrambling decorrelates
+    // neighbours in both axes so the dissolve reads as white noise.
+    // A narrow window keeps the fade "front" from looking mottled.
+    const WINDOW = 0.12
+    const low = pEased - WINDOW
+    const high = pEased + WINDOW
+    const invWindow = 1 / (WINDOW * 2)
+    for (let k = 0; k < order.length; k++) {
+      const idx = order[k]
+      const cy = (idx / W) | 0
+      const cx = idx - cy * W
+      const texY = H - 1 - cy
+      const off = (texY * W + cx) * 4
+      let h = (Math.imul(cx, 374761393) ^ Math.imul(cy, 668265263)) | 0
+      h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
+      h = (h ^ (h >>> 16)) >>> 0
+      const cellTh = h / 4294967295
+      if (cellTh <= low) {
+        tex[off] = 0
+        tex[off + 1] = 0
+        tex[off + 2] = 0
+        tex[off + 3] = src[off + 3]
+      } else if (cellTh >= high) {
+        tex[off] = src[off]
+        tex[off + 1] = src[off + 1]
+        tex[off + 2] = src[off + 2]
+        tex[off + 3] = src[off + 3]
+      } else {
+        // Smoothstep the per-cell interpolation for a softer flip.
+        const u = (cellTh - low) * invWindow
+        const s = u * u * (3 - 2 * u)
+        const fade = (s * 256) | 0
+        tex[off] = (src[off] * fade) >> 8
+        tex[off + 1] = (src[off + 1] * fade) >> 8
+        tex[off + 2] = (src[off + 2] * fade) >> 8
+        tex[off + 3] = src[off + 3]
+      }
+    }
+
+    // Baseline sparkle stays high enough that the field is already
+    // visually present when the dissolve starts, so the handoff to the
+    // growing-phase orb doesn't read as a density jump.
+    const n = (1200 + p * sparkleCount) | 0
+    this.splatSparklesFromOrder(order, n, 0, order.length, pulse)
+
+    this.dirty = true
+  }
+
+  /** Write a soft 3×3 blob centred at (cx, cy). Max-blends so overlap adds softly. */
+  private splatSoft(
+    cx: number, cy: number, peak: number,
+    kernel: number[], tex: Uint8Array, W: number, H: number
+  ): void {
+    const grid = this.gridData
+    for (let ky = 0; ky < 3; ky++) {
+      const py = cy + ky - 1
+      if (py < 0 || py >= H) continue
+      const texY = H - 1 - py
+      for (let kx = 0; kx < 3; kx++) {
+        const px = cx + kx - 1
+        if (px < 0 || px >= W) continue
+        // Skip cells outside any nodule — host rock is never in the
+        // reveal order and would be left lit after reveal completes,
+        // bleeding sparkle pixels into the "empty space" outside the
+        // agate. Only splat onto claimed cells.
+        if (grid && grid[py * W + px] === 0) continue
+        const off = (texY * W + px) * 4
+        const v = (peak * kernel[ky * 3 + kx]) | 0
+        if (v > tex[off]) {
+          tex[off] = v
+          tex[off + 1] = v
+          tex[off + 2] = v
+          tex[off + 3] = 255
+          this.sparkleCells[this.sparkleCount++] = off
+        }
+      }
+    }
+  }
+
+  drawSparkle(count: number, pulse = 1): void {
+    const order = this.revealOrder
+    if (!order) return
+    this.clearSparkles()
+    const remaining = order.length - this.revealCursor
+    if (remaining <= 0) { this.dirty = true; return }
+    const n = Math.min(count, remaining)
+    this.splatSparkles(n, this.revealCursor, order.length, pulse)
+    this.dirty = true
+  }
+
+  /**
+   * Process the next `count` cells in wall-distance order, writing their
+   * final colours into both textureData and baseTextureData. Also tracks
+   * inter-seed boundary candidates so the post-reveal strain pass can run.
+   */
+  advanceReveal(count: number): void {
+    const order = this.revealOrder
+    const grid = this.gridData
+    const rc = this.revealColors
+    if (!order || !grid || !rc) return
+
+    const W = GRID_WIDTH
+    const H = GRID_HEIGHT
+    const tex = this.textureData
+    const base = this.baseTextureData
+    const endCursor = Math.min(this.revealCursor + count, order.length)
+
+    for (let k = this.revealCursor; k < endCursor; k++) {
+      const idx = order[k]
+      const cy = (idx / W) | 0
+      const cx = idx - cy * W
+      const seedId = grid[idx]
+      if (seedId === 0) continue
+
+      const texY = H - 1 - cy
+      const texOff = (texY * W + cx) * 4
+      const srcOff = idx * 4
+      tex[texOff] = rc[srcOff]
+      tex[texOff + 1] = rc[srcOff + 1]
+      tex[texOff + 2] = rc[srcOff + 2]
+      tex[texOff + 3] = rc[srcOff + 3]
+      base[texOff] = rc[srcOff]
+      base[texOff + 1] = rc[srcOff + 1]
+      base[texOff + 2] = rc[srcOff + 2]
+      base[texOff + 3] = rc[srcOff + 3]
+
+      // Incremental boundary tracking for post-reveal strain blending.
+      const minX = cx > 0 ? 1 : 0
+      const maxX = cx < W - 1 ? 1 : 0
+      const minY = cy > 0 ? 1 : 0
+      const maxY = cy < H - 1 ? 1 : 0
+      if (minX && grid[idx - 1] > 0 && grid[idx - 1] !== seedId) this.boundaryCandidates.add(idx)
+      else if (maxX && grid[idx + 1] > 0 && grid[idx + 1] !== seedId) this.boundaryCandidates.add(idx)
+      else if (minY && grid[idx - W] > 0 && grid[idx - W] !== seedId) this.boundaryCandidates.add(idx)
+      else if (maxY && grid[idx + W] > 0 && grid[idx + W] !== seedId) this.boundaryCandidates.add(idx)
+    }
+
+    this.revealCursor = endCursor
+    this.particleCount = endCursor
+    this.dirty = true
+  }
+
   /** Reset the texture to fully transparent (black) */
   reset(): void {
     this.textureData.fill(0)
@@ -393,6 +979,15 @@ export class CrystalRenderer {
     this.particleCount = 0
     this.boundaryCandidates.clear()
     this.lastStrainedCount = 0
+    this.revealOrder = null
+    this.revealCursor = 0
+    this.revealWallDist = null
+    this.revealSeeds = null
+    this.revealColorParams = null
+    this.revealTiltCache.clear()
+    this.partitionColorCache.clear()
+    this.seedMaxWallDist.clear()
+    this.sparkleCount = 0
     invalidateBandCache()
   }
 

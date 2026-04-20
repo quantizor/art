@@ -65,6 +65,7 @@ export const DOMAIN = {
   SEED_PLACEMENT: 0x4,
   SEED_CRYSTALS: 0x5,
   BAND_COLORS: 0x6,
+  INCLUSIONS: 0x7,
 } as const
 
 export type DomainId = (typeof DOMAIN)[keyof typeof DOMAIN]

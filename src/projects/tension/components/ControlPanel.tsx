@@ -5,80 +5,97 @@
  * Slides into the top of the screen when collapsed.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Badge } from '~/ui/Badge'
 import { Button } from '~/ui/Button'
 import { Slider } from '~/ui/Slider'
 import { Select } from '~/ui/Select'
+import { Tooltip } from '~/ui/Tooltip'
 import { MAX_SEED_COUNT } from '../constants'
-import { getAvailableTypes } from '../profiles'
-import type { CrystalType, SimulationParams, ColorParams, SimulationPhase, GrowthPattern } from '../types'
+import type { SimulationParams, ColorParams, SimulationPhase, GrowthPattern } from '../types'
+import type { VariantPreset } from '../engine/ColorMapper'
 
 interface ControlPanelProps {
-  crystalType: CrystalType
-  onCrystalTypeChange: (type: CrystalType) => void
   phase: SimulationPhase
   particleCount: number
   simParams: SimulationParams
   colorParams: ColorParams
   onSimParamsChange: (params: SimulationParams) => void
   onColorParamsChange: (params: ColorParams) => void
+  variant: VariantPreset
+  onVariantChange: (v: VariantPreset) => void
   onReset: () => void
   onSave: () => void
   onRandomize: () => void
 }
 
 export function ControlPanel({
-  crystalType,
-  onCrystalTypeChange,
   phase,
   particleCount,
   simParams,
   colorParams,
   onSimParamsChange,
   onColorParamsChange,
+  variant,
+  onVariantChange,
   onReset,
   onSave,
   onRandomize,
 }: ControlPanelProps) {
   const [collapsed, setCollapsed] = useState(true)
+  const [diceShake, setDiceShake] = useState(false)
+
+  useEffect(() => {
+    if (phase !== 'complete') {
+      setDiceShake(false)
+      return
+    }
+    const t = window.setTimeout(() => setDiceShake(true), 3000)
+    return () => window.clearTimeout(t)
+  }, [phase])
 
   const phaseBadgeVariant =
-    phase === 'growing' ? 'primary' : phase === 'paused' ? 'warning' : phase === 'complete' ? 'info' : 'default'
+    phase === 'growing' || phase === 'revealing' ? 'primary'
+    : phase === 'paused' ? 'warning'
+    : phase === 'complete' ? 'info'
+    : 'default'
 
   return (
     <div className="absolute top-6 right-4 pointer-events-auto z-20 flex items-start gap-1.5">
-      {/* Randomize button — 3D die */}
-      <button
-        onClick={onRandomize}
-        className="bg-black/80 border border-[var(--color-border-default)] p-2 px-2.5 text-white/70 hover:text-white cursor-pointer select-none"
-        title="Randomize"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          {/* 3D die at an angle — isometric cube with dots */}
-          <path d="M12 2L2 7v10l10 5 10-5V7L12 2z" />
-          <path d="M12 22V12" />
-          <path d="M22 7L12 12" />
-          <path d="M2 7l10 5" />
-          {/* Dots on visible faces */}
-          <circle cx="7" cy="13" r="0.8" fill="currentColor" stroke="none" />
-          <circle cx="17" cy="13" r="0.8" fill="currentColor" stroke="none" />
-          <circle cx="12" cy="7" r="0.8" fill="currentColor" stroke="none" />
-        </svg>
-      </button>
+      <Tooltip content="Randomize" position="bottom">
+        <button
+          onClick={() => { setDiceShake(false); onRandomize() }}
+          className="bg-black/80 border border-[var(--color-border-default)] p-2 px-2.5 text-white/70 hover:text-white cursor-pointer select-none"
+          aria-label="Randomize"
+        >
+          <svg className={diceShake ? 'dice-shake' : ''} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2L2 7v10l10 5 10-5V7L12 2z" />
+            <path d="M12 22V12" />
+            <path d="M22 7L12 12" />
+            <path d="M2 7l10 5" />
+            <circle cx="12" cy="7" r="1.1" fill="currentColor" stroke="none" />
+            <circle cx="4.2" cy="10.3" r="1.1" fill="currentColor" stroke="none" />
+            <circle cx="9.8" cy="18.7" r="1.1" fill="currentColor" stroke="none" />
+            <circle cx="19.8" cy="10.3" r="1.1" fill="currentColor" stroke="none" />
+            <circle cx="17" cy="14.5" r="1.1" fill="currentColor" stroke="none" />
+            <circle cx="14.2" cy="18.7" r="1.1" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+      </Tooltip>
 
-      {/* Save button */}
-      <button
-        onClick={onSave}
-        className="bg-black/80 border border-[var(--color-border-default)] p-2 px-2.5 text-white/70 hover:text-white cursor-pointer select-none"
-        title="Save image"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>
-      </button>
+      <Tooltip content="Save image" position="bottom">
+        <button
+          onClick={onSave}
+          className="bg-black/80 border border-[var(--color-border-default)] p-2 px-2.5 text-white/70 hover:text-white cursor-pointer select-none"
+          aria-label="Save image"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+      </Tooltip>
 
       {/* Drawer */}
       <div className="w-56">
@@ -119,27 +136,17 @@ export function ControlPanel({
                 onSimParamsChange({ ...simParams, seedCount: Number(e.target.value) })
               }
             />
-            <Slider
-              label="Speed"
-              min={50}
-              max={50000}
-              step={50}
-              value={simParams.stepsPerFrame}
-              onChange={(e) =>
-                onSimParamsChange({ ...simParams, stepsPerFrame: Number(e.target.value) })
-              }
-            />
             <Select
-              label="Crystal"
+              label="Variant"
               size="sm"
-              value={crystalType}
-              onChange={(e) => onCrystalTypeChange(e.target.value as CrystalType)}
+              value={variant}
+              onChange={(e) => onVariantChange(e.target.value as VariantPreset)}
             >
-              {getAvailableTypes().map((t) => (
-                <option key={t} value={t}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </option>
-              ))}
+              <option value="random">Random mix</option>
+              <option value="onyx">Onyx (pool)</option>
+              <option value="zonal">Zonal (single-feedback)</option>
+              <option value="iris">Iris (pride)</option>
+              <option value="dyed">Dyed</option>
             </Select>
             <Select
               label="Pattern"

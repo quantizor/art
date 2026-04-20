@@ -11,10 +11,10 @@ import { SceneManager } from '../scene/SceneManager'
 import { CrystalRenderer } from '../scene/CrystalRenderer'
 import { FloodFillSimulation } from '../engine/FloodFillSimulation'
 import { generateSeedPositions } from '../engine/SeedPlacer'
-import { precomputeSeedTilt, setActiveProfile } from '../engine/ColorMapper'
-import type { SeedTiltData } from '../engine/ColorMapper'
+import { runPartition } from '../engine/partitionService'
+import { setActiveProfile, setVariantOverride, type VariantPreset } from '../engine/ColorMapper'
 import { ControlPanel } from './ControlPanel'
-import { getProfile, DEFAULT_CRYSTAL_TYPE } from '../profiles'
+import { profile as agateProfile } from '../profiles'
 import {
   randomSeedString,
   decodeSeed,
@@ -32,7 +32,7 @@ import {
   GRID_HEIGHT,
   GRID_SCALE,
 } from '../constants'
-import type { CrystalProfile, CrystalType, SimulationParams, ColorParams, SimulationPhase } from '../types'
+import type { CrystalProfile, SimulationParams, ColorParams, SimulationPhase } from '../types'
 
 /** Generate randomized color params from a crystal profile */
 function randomParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.random): ColorParams {
@@ -41,7 +41,6 @@ function randomParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.rando
   const [lMin, lMax] = profile.baseLightnessRange
   const [sMin, sMax] = profile.saturationRange
   return {
-    mode: 'agate',
     growthPattern: profile.growthPattern,
     bandWavelength: Math.round(wlMin + rng() * (wlMax - wlMin)),
     bandAmplitude: ampMin + rng() * (ampMax - ampMin),
@@ -73,7 +72,6 @@ export function CrystalGrowthViewer() {
   const animateRef = useRef<((time: number) => void) | null>(null)
   const lastTimeRef = useRef<number>(0)
 
-  const [crystalType, setCrystalType] = useState<CrystalType>(DEFAULT_CRYSTAL_TYPE)
   const [phase, setPhase] = useState<SimulationPhase>('idle')
   const [particleCount, setParticleCount] = useState(0)
   const [fps, setFps] = useState(0)
@@ -86,20 +84,19 @@ export function CrystalGrowthViewer() {
   seedStringRef.current = seedString
 
   const [simParams, setSimParams] = useState<SimulationParams>(() => {
-    const profile = getProfile(DEFAULT_CRYSTAL_TYPE)
     const masterSeed = decodeSeed(seedString)
     const simRng = forkDomain(masterSeed, DOMAIN.SIM_PARAMS)
     return {
       ...DEFAULT_SIM_PARAMS,
-      ...randomSimParamsFromProfile(profile, simRng),
+      ...randomSimParamsFromProfile(agateProfile, simRng),
     }
   })
   const [colorParams, setColorParams] = useState<ColorParams>(() => {
-    const profile = getProfile(DEFAULT_CRYSTAL_TYPE)
     const masterSeed = decodeSeed(seedString)
     const colorRng = forkDomain(masterSeed, DOMAIN.COLOR_PARAMS)
-    return randomParamsFromProfile(profile, colorRng)
+    return randomParamsFromProfile(agateProfile, colorRng)
   })
+  const [variant, setVariant] = useState<VariantPreset>('random')
 
   // Stable refs for animation loop
   const phaseRef = useRef(phase)
@@ -109,51 +106,14 @@ export function CrystalGrowthViewer() {
   const colorParamsRef = useRef(colorParams)
   colorParamsRef.current = colorParams
 
-  // Per-seed tilt data cache: seedId -> precomputed tilt values.
-  // Avoids recomputing Math.cos/pow for every cell in the same seed.
-  const seedTiltCacheRef = useRef<Map<number, SeedTiltData>>(new Map())
 
-  const handleStick = useCallback(
-    (
-      _walkerIndex: number,
-      cx: number,
-      cy: number,
-      seedId: number,
-      dxFromSeed: number,
-      dyFromSeed: number,
-      _boundaryPressure: number
-    ) => {
-      const renderer = rendererRef.current
-      const sim = simRef.current
-      if (!renderer || !sim) return
-
-      // Look up seed orientation and tilt for color computation
-      const seed = sim.getSeed(seedId)
-      const seedOrientation = seed ? seed.axes[0] : 0
-
-      // Get or create precomputed tilt + warp-frame data for this seed
-      let tiltData = seedTiltCacheRef.current.get(seedId)
-      if (!tiltData) {
-        tiltData = precomputeSeedTilt(
-          seed ?? { tilt: 0, axes: [0], noiseOffsetX: 0, noiseOffsetY: 0 }
-        )
-        seedTiltCacheRef.current.set(seedId, tiltData)
-      }
-
-      // Use the zero-allocation direct-to-buffer path.
-      // Pass raw (dx, dy) normalized to base resolution so color math
-      // stays DPI-independent (avoids atan2/sqrt in the sim hot loop).
-      const invScale = 1 / GRID_SCALE
-      renderer.addParticleDirect(
-        cx, cy, dxFromSeed * invScale, dyFromSeed * invScale, seedId,
-        colorParamsRef.current, seedOrientation, tiltData
-      )
-    },
-    []
-  )
-
-  /** Initialize simulation with Poisson-disk seeds */
-  const initSeeds = useCallback((sim: FloodFillSimulation) => {
+  /**
+   * Deterministically build the cavity partition for the current seed
+   * string, compute the wall-distance field, and hand it to the renderer
+   * so the inward reveal can animate. This is the "boundaries first"
+   * step — synchronous, no animation.
+   */
+  const initSeeds = useCallback(async (sim: FloodFillSimulation): Promise<void> => {
     const masterSeed = decodeSeed(seedStringRef.current)
     sim.setSeed(masterSeed)
     const placementRng = forkDomain(masterSeed, DOMAIN.SEED_PLACEMENT)
@@ -162,6 +122,27 @@ export function CrystalGrowthViewer() {
       10, placementRng
     )
     sim.seedMany(positions)
+
+    const renderer = rendererRef.current
+    if (!renderer) return
+
+    // Orb centres are known as soon as seeds are placed — long before
+    // partition/wallDist finish. Plant them now.
+    const seeds = sim.getSeeds()
+    renderer.setOrbCenters(seeds.map((s) => ({ x: s.x, y: s.y })))
+
+    // Partition + wallDist run off the main thread so the dissolve
+    // animation stays smooth through the handoff.
+    const { gridData, wallDist } = await runPartition(
+      seeds.slice(),
+      GRID_WIDTH,
+      GRID_HEIGHT,
+      agateProfile.growthNoiseScale * 0.22,
+      0.065
+    )
+    sim.getGrid().data.set(gridData)
+    const seedMap = new Map(seeds.map((s) => [s.id, s]))
+    renderer.prepareReveal(sim.getGrid().data, wallDist, seedMap, colorParamsRef.current)
   }, [])
 
   // Mount: create scene, renderer, simulation
@@ -175,7 +156,7 @@ export function CrystalGrowthViewer() {
     const crystalRenderer = new CrystalRenderer(scene.scene, MAX_PARTICLES)
     rendererRef.current = crystalRenderer
 
-    const sim = new FloodFillSimulation(handleStick)
+    const sim = new FloodFillSimulation()
     simRef.current = sim
 
     // Connect renderer to grid data for incremental boundary detection
@@ -185,22 +166,21 @@ export function CrystalGrowthViewer() {
     const masterSeed = decodeSeed(seedStringRef.current)
     const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
     const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
-    setActiveProfile(getProfile(DEFAULT_CRYSTAL_TYPE), strategyRng, bandRng)
+    setActiveProfile(agateProfile, strategyRng, bandRng)
+    setVariantOverride(variant)
 
-    // Initialize with many random seeds
-    initSeeds(sim)
+    // Initialize: partition runs async in a worker; kick it off and
+    // move into growing phase. The animate loop will show the loading
+    // orb at seed centres (known synchronously) until the worker
+    // returns and prepareReveal wires the cell set in.
     setPhase('growing')
+    initSeeds(sim)
 
     // Resize handler
     const onResize = () => scene.resize()
     window.addEventListener('resize', onResize)
 
-    // Block pinch-to-zoom (trackpad sends ctrl+wheel, Safari sends gesturestart)
-    const onWheel = (e: WheelEvent) => { if (e.ctrlKey) e.preventDefault() }
-    const onGesture = (e: Event) => e.preventDefault()
-    canvas.addEventListener('wheel', onWheel, { passive: false })
-    canvas.addEventListener('gesturestart', onGesture)
-    canvas.addEventListener('gesturechange', onGesture)
+    // Pinch-to-zoom enabled — viewport gestures pass through to the browser.
 
     // Animation loop
     let frameCount = 0
@@ -208,6 +188,10 @@ export function CrystalGrowthViewer() {
     let fpsLastTime = 0
     let smoothedFrameTime = 0
     const animate = (time: number) => {
+      if (phaseRef.current === 'complete') {
+        rafRef.current = 0
+        return
+      }
       rafRef.current = requestAnimationFrame(animate)
 
       const dt = lastTimeRef.current ? Math.min(time - lastTimeRef.current, MAX_DELTA) : 16
@@ -227,35 +211,97 @@ export function CrystalGrowthViewer() {
         setFps(smoothedFrameTime > 0 ? Math.round(1000 / smoothedFrameTime) : 0)
       }
 
-      if (phaseRef.current === 'growing') {
-        sim.update(dt)
-
-        // Progressive strain: run boundary blending every ~45 frames
-        // so boundary effects feather in gradually as crystals meet.
-        // Now only processes incrementally-tracked boundary cells (not full grid).
-        if (frameCount % 45 === 0) {
-          crystalRenderer.applyBoundaryStrain(sim.getGrid().data)
+      if (phaseRef.current === 'dissolving') {
+        const startAt = dissolvePhaseStartRef.current || time
+        if (!dissolvePhaseStartRef.current) dissolvePhaseStartRef.current = time
+        const elapsed = time - startAt
+        const DURATION = 1000
+        const progress = Math.min(1, elapsed / DURATION)
+        const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
+        // Sparkle count scales with converted-region size.
+        const sparkleCount = 1500 + ((progress * 5500) | 0)
+        crystalRenderer.drawParticleDissolve(progress, sparkleCount, pulse)
+        if (elapsed >= DURATION) {
+          dissolvePhaseStartRef.current = 0
+          // Preserve the old revealOrder before reset so the growing
+          // phase can cross-fade sparkles from old → new cavity cells.
+          crystalRenderer.capturePreviousRevealOrder()
+          dissolveCompleteCbRef.current?.()
+          dissolveCompleteCbRef.current = null
+          // Composite the first crossfade frame immediately so there's
+          // no pure-black frame between dissolve end and growing start.
+          crystalRenderer.drawCrossfadeSparkles(7000, pulse, 0)
+          // Synchronously switch the phase ref so the NEXT rAF enters
+          // the growing branch. Without this, React's async phase
+          // update lets rAFs re-enter the dissolving branch with
+          // dissolvePhaseStartRef reset to 0, which restarts the
+          // dissolve from progress=0 and re-reveals the old design —
+          // the "stutter of blackness" the user reported was actually
+          // the design flashing back in before the state settled.
+          phaseRef.current = 'growing'
         }
-
         crystalRenderer.flush()
-
-        // Throttle React state updates to every 10 frames
-        if (frameCount % 10 === 0) {
-          const count = sim.getAggregateCount()
-          setParticleCount(count)
-          if (sim.isDone()) {
-            // Final strain pass catches last few cells
-            crystalRenderer.applyBoundaryStrain(sim.getGrid().data)
-            crystalRenderer.flush()
-            setPhase('complete')
-            // Final render then stop the loop
-            scene.render()
-            return
-          }
-        }
-
         scene.render()
+        return
       }
+
+      if (phaseRef.current === 'growing') {
+        crystalRenderer.precomputeChunk(180_000)
+        const startAt = growPhaseStartRef.current || time
+        if (!growPhaseStartRef.current) growPhaseStartRef.current = time
+        const elapsed = time - startAt
+        const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
+        // Cross-fade sparkles from the previous nodule's cell set to
+        // the new one over the first 500ms. Paint area and shape shift
+        // smoothly while the sparkle primitive stays identical.
+        const CROSSFADE_MS = 500
+        if (crystalRenderer.hasPreviousRevealOrder()) {
+          const w = Math.min(1, elapsed / CROSSFADE_MS)
+          crystalRenderer.drawCrossfadeSparkles(7000, pulse, w)
+          if (w >= 1) crystalRenderer.clearPreviousRevealOrder()
+        } else {
+          crystalRenderer.drawGrowthOrb(7000, 1, pulse)
+        }
+        crystalRenderer.flush()
+        // Advance to revealing once the minimum grow duration has
+        // elapsed AND the colour precompute has caught up.
+        if (elapsed >= 1200 && crystalRenderer.isPrecomputeDone()) {
+          growPhaseStartRef.current = 0
+          setPhase('revealing')
+        }
+        scene.render()
+        return
+      }
+
+      if (phaseRef.current === 'revealing') {
+        const CHUNK = 30_000
+        crystalRenderer.advanceReveal(CHUNK)
+        const remaining = crystalRenderer.revealRemaining()
+        const sparkleCount = Math.min(5000, Math.floor(remaining * 0.004) + 400)
+        const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
+        crystalRenderer.drawSparkle(sparkleCount, pulse)
+        crystalRenderer.flush()
+        if (frameCount % 6 === 0) {
+          setParticleCount(crystalRenderer.getCount())
+        }
+        if (crystalRenderer.revealRemaining() === 0) {
+          // Restore any leftover sparkle cells to their underlying band
+          // colour before the strain pass runs, so no shimmer ghosts
+          // persist into the completed state.
+          crystalRenderer.restoreSparklesFromBase()
+          crystalRenderer.applyBoundaryStrain(sim.getGrid().data)
+          crystalRenderer.flush()
+          setPhase('complete')
+          scene.render()
+          window.dispatchEvent(new CustomEvent('tension:reveal-complete'))
+          return
+        }
+        scene.render()
+        return
+      }
+
+      // Silence unused `dt` in active paths.
+      void dt
     }
     animateRef.current = animate
 
@@ -264,13 +310,10 @@ export function CrystalGrowthViewer() {
     return () => {
       cancelAnimationFrame(rafRef.current)
       window.removeEventListener('resize', onResize)
-      canvas.removeEventListener('wheel', onWheel)
-      canvas.removeEventListener('gesturestart', onGesture)
-      canvas.removeEventListener('gesturechange', onGesture)
       crystalRenderer.dispose()
       scene.dispose()
     }
-  }, [handleStick, initSeeds])
+  }, [initSeeds])
 
   // Restart the rAF loop (e.g. after completion or tab refocus)
   const restartLoop = useCallback(() => {
@@ -286,7 +329,9 @@ export function CrystalGrowthViewer() {
     const onVisibilityChange = () => {
       if (document.hidden) {
         cancelAnimationFrame(rafRef.current)
-      } else if (phaseRef.current === 'growing') {
+      } else if (phaseRef.current === 'growing' || phaseRef.current === 'complete') {
+        // Idle sparkle runs during 'complete' too — restart the rAF
+        // loop on refocus so twinkles resume instead of freezing.
         restartLoop()
       }
     }
@@ -294,39 +339,14 @@ export function CrystalGrowthViewer() {
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   }, [restartLoop])
 
-  // Click-to-seed (disabled once scene is fully grown)
-  const handleCanvasClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (phaseRef.current === 'complete') return
-
-      const canvas = canvasRef.current
-      const scene = sceneRef.current
-      const sim = simRef.current
-      if (!canvas || !scene || !sim) return
-
-      const rect = canvas.getBoundingClientRect()
-      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1
-      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1
-
-      const worldPos = scene.ndcToWorld(ndcX, ndcY)
-      sim.addSeed(worldPos.x, worldPos.y)
-
-      if (phaseRef.current === 'idle') {
-        setPhase('growing')
-        restartLoop()
-      }
-    },
-    [restartLoop]
-  )
-
   // Keyboard: Space to pause
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         e.preventDefault()
         setPhase((prev) => {
-          if (prev === 'growing') return 'paused'
-          if (prev === 'paused') return 'growing'
+          if (prev === 'revealing') return 'paused'
+          if (prev === 'paused') return 'revealing'
           return prev
         })
       }
@@ -341,33 +361,54 @@ export function CrystalGrowthViewer() {
     if (sim) sim.setParams(simParams)
   }, [simParams])
 
-  // Reset only on structural param changes (seed count, axis count, color)
-  const prevStructuralRef = useRef({ seedCount: simParams.seedCount, axisCount: simParams.axisCount, colorParams })
+  const growPhaseStartRef = useRef(0)
+  const dissolvePhaseStartRef = useRef(0)
+  const dissolveCompleteCbRef = useRef<(() => void) | null>(null)
+
+  // Reset only on structural param changes (seed count, axis count, color, variant)
+  const prevStructuralRef = useRef({ seedCount: simParams.seedCount, axisCount: simParams.axisCount, colorParams, variant })
   useEffect(() => {
     const prev = prevStructuralRef.current
     const structuralChanged =
       prev.seedCount !== simParams.seedCount ||
       prev.axisCount !== simParams.axisCount ||
-      prev.colorParams !== colorParams
+      prev.colorParams !== colorParams ||
+      prev.variant !== variant
 
-    prevStructuralRef.current = { seedCount: simParams.seedCount, axisCount: simParams.axisCount, colorParams }
+    prevStructuralRef.current = { seedCount: simParams.seedCount, axisCount: simParams.axisCount, colorParams, variant }
 
     if (!structuralChanged) return
 
     const sim = simRef.current
     const renderer = rendererRef.current
     if (!sim || !renderer) return
-    // Sync ref before initSeeds reads it
-    simParamsRef.current = simParams
-    sim.setParams(simParams)
-    sim.reset()
-    renderer.reset()
-    seedTiltCacheRef.current.clear()
-    initSeeds(sim)
-    setParticleCount(0)
-    setPhase('growing')
+
+    // Dissolve (design fades → dreamy sparkles on black) → grow → reveal.
+    // Dissolve runs on the current design texture; once complete, we
+    // run the partition and hand off to the growing phase seamlessly —
+    // canvas never fades to 0 since sparkles bridge the gap.
+    renderer.captureForDissolve()
+    // Set phase synchronously so the rAF early-exit (which reads
+    // phaseRef before React flushes) doesn't kill the freshly
+    // restarted loop on the next tick.
+    phaseRef.current = 'dissolving'
+    setPhase('dissolving')
+    dissolveCompleteCbRef.current = () => {
+      simParamsRef.current = simParams
+      setVariantOverride(variant)
+      sim.setParams(simParams)
+      sim.reset()
+      renderer.reset()
+      initSeeds(sim)
+      setParticleCount(0)
+      setPhase('growing')
+      restartLoop()
+    }
     restartLoop()
-  }, [simParams, colorParams, initSeeds, restartLoop])
+    return () => {
+      dissolveCompleteCbRef.current = null
+    }
+  }, [simParams, colorParams, variant, initSeeds, restartLoop])
 
   const handleReset = useCallback(() => {
     const sim = simRef.current
@@ -375,38 +416,14 @@ export function CrystalGrowthViewer() {
     if (!sim || !renderer) return
     sim.reset()
     renderer.reset()
-    seedTiltCacheRef.current.clear()
     initSeeds(sim)
     setParticleCount(0)
-    setPhase('growing')
+    phaseRef.current = 'revealing'
+    setPhase('revealing')
     restartLoop()
   }, [initSeeds, restartLoop])
 
   const handleRandomize = useCallback(() => {
-    const profile = getProfile(crystalType)
-    const newSeed = randomSeedString()
-    setSeedString(newSeed)
-    const masterSeed = decodeSeed(newSeed)
-
-    // Fork domains for independent subsystems
-    const simRng = forkDomain(masterSeed, DOMAIN.SIM_PARAMS)
-    const colorRng = forkDomain(masterSeed, DOMAIN.COLOR_PARAMS)
-    const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
-    const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
-
-    // Re-sample vibrancy/uniformity from profile ranges with seeded PRNG
-    setActiveProfile(profile, strategyRng, bandRng)
-    // Just update state — the structural change effect handles reset + re-seed
-    setSimParams(prev => ({
-      ...prev,
-      ...randomSimParamsFromProfile(profile, simRng),
-      facets: 0,
-    }))
-    setColorParams(randomParamsFromProfile(profile, colorRng))
-  }, [crystalType])
-
-  const handleCrystalTypeChange = useCallback((type: CrystalType) => {
-    const profile = getProfile(type)
     const newSeed = randomSeedString()
     setSeedString(newSeed)
     const masterSeed = decodeSeed(newSeed)
@@ -416,16 +433,13 @@ export function CrystalGrowthViewer() {
     const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
     const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
 
-    setCrystalType(type)
-    setActiveProfile(profile, strategyRng, bandRng)
-    simRef.current?.setProfile(profile)
-    // Randomize params for the new type and trigger reset
+    setActiveProfile(agateProfile, strategyRng, bandRng)
     setSimParams(prev => ({
       ...prev,
-      ...randomSimParamsFromProfile(profile, simRng),
+      ...randomSimParamsFromProfile(agateProfile, simRng),
       facets: 0,
     }))
-    setColorParams(randomParamsFromProfile(profile, colorRng))
+    setColorParams(randomParamsFromProfile(agateProfile, colorRng))
   }, [])
 
   const handleSave = useCallback(() => {
@@ -445,14 +459,14 @@ export function CrystalGrowthViewer() {
       fps={fps}
       controls={
         <ControlPanel
-          crystalType={crystalType}
-          onCrystalTypeChange={handleCrystalTypeChange}
           phase={phase}
           particleCount={particleCount}
           simParams={simParams}
           colorParams={colorParams}
           onSimParamsChange={setSimParams}
           onColorParamsChange={setColorParams}
+          variant={variant}
+          onVariantChange={setVariant}
           onReset={handleReset}
           onSave={handleSave}
           onRandomize={handleRandomize}
@@ -461,9 +475,8 @@ export function CrystalGrowthViewer() {
     >
       <canvas
         ref={canvasRef}
-        className={`w-full h-full block ${phase === 'complete' ? 'cursor-default' : 'cursor-pointer'}`}
+        className="w-full h-full block"
         title={phase === 'complete' ? 'Click the dice to generate a new design.' : undefined}
-        onClick={handleCanvasClick}
       />
     </ProjectShell>
   )

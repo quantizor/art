@@ -9,7 +9,6 @@
 import type { CrystalProfile } from '../types'
 
 export const agateProfile: CrystalProfile = {
-  type: 'agate',
   name: 'Agate',
 
   // Growth shape (FloodFillSimulation)
@@ -26,21 +25,18 @@ export const agateProfile: CrystalProfile = {
   bandH: 0.7,
   bandWarpStrength: 1.2,
   bandCenterFadeMultiplier: 3,
-  bandRampBands: 12,
-  bandRampStart: 0.2,
-  bandRampExponent: 1.4,
   bandWidthVariation: [0.3, 2.0],
-  bandRhythmStrength: 0.25,
-  bandRhythmFrequency: 0.12,
   bandThinFrequency: 0.15,
   bandThinWidth: 0.12,
 
-  // Color strategy
+  // Color strategy — tuned to observed real agate palettes. Lower
+  // uniformity + higher boundary frequency gives the crisp alternating
+  // fortification rings you see in Brazilian/Uruguayan specimens.
   colorStrategyName: 'agate-experimental',
-  colorVibrancyRange: [0.25, 0.90],
-  colorUniformityRange: [0.45, 0.85],
+  colorVibrancyRange: [0.40, 0.90],
+  colorUniformityRange: [0.55, 0.82],
   colorBoundaryFrequency: 0.14,
-  colorFamilySwitchRate: 0.07,
+  colorFamilySwitchRate: 0.02,
 
   // Optical effects (ColorMapper)
   tiltRange: 0.8,
@@ -50,11 +46,11 @@ export const agateProfile: CrystalProfile = {
   strainEnabled: true,
 
   // Randomization ranges (CrystalGrowthViewer)
-  bandWavelengthRange: [8, 24],
+  bandWavelengthRange: [4, 9],
   bandAmplitudeRange: [0.25, 0.65],
   baseLightnessRange: [0.45, 0.70],
-  saturationRange: [0.90, 1.00],
-  seedCountRange: [1, 12],
+  saturationRange: [0.55, 0.85],
+  seedCountRange: [1, 3],
   axisCountRange: [2, 6],
   aspectRatioRange: [1.0, 1.3],
 }

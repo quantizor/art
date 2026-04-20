@@ -45,8 +45,11 @@ export function generateSeedPositions(
   let attempts = 0
   while (positions.length < count && attempts < maxAttempts) {
     attempts++
-    const x = minX + rng() * (maxX - minX)
-    const y = minY + rng() * (maxY - minY)
+    // Triangular distribution (average of two uniforms) for a soft
+    // centre-bias — nodules cluster toward the middle of the frame,
+    // corners are rare but still reachable.
+    const x = minX + ((rng() + rng()) * 0.5) * (maxX - minX)
+    const y = minY + ((rng() + rng()) * 0.5) * (maxY - minY)
 
     let tooClose = false
     for (const p of positions) {
