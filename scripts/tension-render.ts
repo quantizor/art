@@ -151,6 +151,11 @@ async function main() {
        *  Expected: identical bytes → mean/peak delta 0. Any non-zero
        *  means the baseline path has picked up a hidden side effect. */
       parity:  { type: 'boolean', default: false },
+      /** Optional native-resolution crop: "X,Y,W,H" in PIXEL space of
+       *  the final (Y-flipped) PNG. When set, emits additional
+       *  <label>-crop-{a,b,diff}.png files at exactly the requested
+       *  size so we can loupe specific regions without downsampling. */
+      crop:    { type: 'string' },
     },
   })
 
@@ -344,6 +349,25 @@ async function main() {
   emitTiles(outA, 'a')
   emitTiles(outB, 'b')
   emitTiles(diff, 'diff')
+
+  // Optional --crop X,Y,W,H native-resolution loupe crop.
+  if (values.crop) {
+    const parts = values.crop.split(',').map(n => Number(n.trim()))
+    if (parts.length !== 4 || parts.some(n => !Number.isFinite(n) || n < 0)) {
+      console.error(`--crop expects "X,Y,W,H" all non-negative; got "${values.crop}"`)
+      process.exit(1)
+    }
+    const [cx, cy, cw, ch] = parts
+    const maxW = Math.max(0, Math.min(cw, W - cx))
+    const maxH = Math.max(0, Math.min(ch, H - cy))
+    if (maxW <= 0 || maxH <= 0) {
+      console.error(`--crop region is out of bounds for ${W}x${H} render`)
+      process.exit(1)
+    }
+    writeFileSync(join(values.outdir!, `${values.label}-crop-a.png`),    encodePng(maxW, maxH, cropRegion(outA, cx, cy, maxW, maxH)))
+    writeFileSync(join(values.outdir!, `${values.label}-crop-b.png`),    encodePng(maxW, maxH, cropRegion(outB, cx, cy, maxW, maxH)))
+    writeFileSync(join(values.outdir!, `${values.label}-crop-diff.png`), encodePng(maxW, maxH, cropRegion(diff, cx, cy, maxW, maxH)))
+  }
 
   const summary = {
     seed: seedString, variant, W, H,

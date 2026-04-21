@@ -612,9 +612,14 @@ export function computeColorWallBased(
     // internal transition (bandIdx>=1, source=previous band).
     const cellsFromOuter = absDist - bandStart
     let sourceBand: BandColor | null = null
-    // Experimental path uses a wider window so specks can scatter
-    // further inward as trailing dust.
-    const grainMaxCells = experimental ? 14 : 6.5
+    // Experimental path scales the grain window with band width so
+    // sediment can embed up to ~½ the band's span — fat zonal quiet
+    // zones now carry trailing dust into the middle, while thin
+    // fortification bands stay bounded to a few outer cells. Capped
+    // at 80 cells so the onyx pool doesn't turn into a dust field.
+    const grainMaxCells = experimental
+      ? Math.max(1.5, Math.min(span * 0.5, 80))
+      : 6.5
     let grainWindow = false
     if (bandIdx === 0) {
       if (shellIsDark) {
@@ -623,8 +628,20 @@ export function computeColorWallBased(
       }
     } else {
       const prev = currentStrategy.getBandColor(bandIdx - 1, hueKey, seedId, baseLightness, saturation)
-      if (prev.L < 0.32 && band.L > 0.55) {
-        sourceBand = prev
+      // Sediment settles at the cavity-wall deposition contact —
+      // particles are weathered host-rock debris trapped in the first
+      // silica layer. Physics doesn't care what the Mn shell rolled.
+      // Experimental path always fires at bandIdx===1 when that band
+      // is chalcedony-light, using a dark organic/oxide fallback when
+      // prev (the shell) rolled a non-dark family. Baseline keeps the
+      // strict L<0.32 check for backwards compatibility.
+      const transitionOk = experimental
+        ? bandIdx === 1 && band.L > 0.45
+        : prev.L < 0.32 && band.L > 0.55
+      if (transitionOk) {
+        sourceBand = experimental && prev.L >= 0.30
+          ? { L: 0.09, C: 0.015, H: 25 } // dark particle fallback
+          : prev
         grainWindow = cellsFromOuter < grainMaxCells
       }
     }
@@ -633,27 +650,42 @@ export function computeColorWallBased(
 
       if (experimental) {
         // ── Experimental: two-scale speckle ─────────────────────
-        // Fine dust pass — dense tiny specks across the whole window,
-        // with a gentle falloff so trailing dust reaches the inner
-        // extent. Lattice 6 with 9% spawn gives ~0.025 stamps per cell².
-        // Particles are sub-pixel round (r 0.25–0.55) so at 1:1 they
-        // read as crisp specks, not soft clouds.
+        // Fine dust — dense near the contact, stochastically diffused
+        // by low-frequency 2D noise so the sediment doesn't form a
+        // clean annulus. Some angular regions carry dense drifts
+        // deeper in, others stay near-empty; a long tail permits
+        // occasional isolated specks anywhere in the window.
         const seedOff = bandIdx * 977
         const LAT_F = 6
         {
           const cxF = Math.round(dx / LAT_F)
           const cyF = Math.round(dy / LAT_F)
-          const densityF = 1 - distRatio * 0.60 // shallow tail — keep specks all the way
+          // Radial fallback envelope — quadratic decay.
+          const radial = (1 - distRatio) * (1 - distRatio)
+          // Angular/patchy modulation. Low frequency (period ~60 cells)
+          // so drifts span many lattice cells; rotated noise offsets
+          // per band so adjacent bands don't align their patches.
+          const patchN = valueNoise(dx * 0.017 + bandIdx * 31, dy * 0.017 - bandIdx * 17)
+          const patchMod = 0.15 + patchN * 1.9 // 0.15 → 2.05 multiplier
+          // Stochastic tail — a small uniform base so rare specks
+          // appear even at full depth, scaled by the patch field.
+          const densityF = (radial * 0.92 + 0.08) * patchMod
           const spawnF = cellHash(cxF * 239 + hueKey + seedOff, cyF * 421 + seedOff)
-          if (spawnF < 0.09 * densityF) {
+          // Heavy base rate so sediment actually READS near the
+          // crust — combined with the quadratic falloff + patch
+          // modulation it integrates to a believable outer skin of
+          // dark specks that thins with depth.
+          if (spawnF < 0.42 * densityF) {
             const jx = (cellHash(cxF + seedOff, cyF ^ 907) - 0.5) * LAT_F * 0.9
             const jy = (cellHash(cxF ^ 131, cyF + seedOff) - 0.5) * LAT_F * 0.9
             const ddx = dx - (cxF * LAT_F + jx)
             const ddy = dy - (cyF * LAT_F + jy)
             const d2 = ddx * ddx + ddy * ddy
             const sizeRoll = cellHash(cxF ^ (557 + seedOff), cyF ^ 283)
-            const rInner = 0.25 + sizeRoll * 0.30
-            const rOuter = rInner + 0.40
+            // Small specks dominate; rare larger particles break up
+            // the uniform-grain look without dominating the frame.
+            const rInner = 0.45 + sizeRoll * 0.50
+            const rOuter = rInner + 0.55
             if (d2 < rOuter * rOuter) {
               const d = Math.sqrt(d2)
               const t = d <= rInner ? 1 : 1 - (d - rInner) / (rOuter - rInner)
