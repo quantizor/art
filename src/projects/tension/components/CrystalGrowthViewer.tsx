@@ -228,19 +228,23 @@ export function CrystalGrowthViewer() {
     () => loadPref<VariantPreset>(STORAGE_KEYS.variant, 'random', VARIANT_OPTIONS)
   )
   // Dev-only onion-skin wipe position (0 = everything enhanced, 1 =
-  // everything classic, 0.5 = split at centre). Persisted so the
-  // iteration position survives reloads. Always 0.5 default in prod
-  // (the renderer ignores it there).
-  const [onionSplit, setOnionSplit] = useState<number>(() => {
-    if (typeof window === 'undefined' || !import.meta.env.DEV) return 0.5
+  // everything classic, 0.5 = split at centre). Hydration-safe: both
+  // server and first client render use 0.5, then a post-mount effect
+  // reads the persisted value. Starting with localStorage in the
+  // useState initializer causes an SSR/client attribute mismatch on
+  // the handle's `left` inline style.
+  const [onionSplit, setOnionSplit] = useState<number>(0.5)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
     try {
       const raw = window.localStorage.getItem(STORAGE_KEYS.onionSplit)
-      const n = raw == null ? 0.5 : Number(raw)
-      return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0.5
+      if (raw == null) return
+      const n = Number(raw)
+      if (Number.isFinite(n)) setOnionSplit(Math.min(1, Math.max(0, n)))
     } catch {
-      return 0.5
+      // ignore
     }
-  })
+  }, [])
 
   useEffect(() => { savePref(STORAGE_KEYS.variant, variant) }, [variant])
   useEffect(() => { savePref(STORAGE_KEYS.seedCount, String(simParams.seedCount)) }, [simParams.seedCount])
