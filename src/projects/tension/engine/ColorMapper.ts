@@ -674,11 +674,11 @@ export function computeColorWallBased(
           const patchMod = 0.15 + patchN * 1.9 // 0.15 → 2.05 multiplier
           const densityF = radial * patchMod
           const spawnF = cellHash(cxF * 239 + hueKey + seedOff, cyF * 421 + seedOff)
-          // Heavy base rate so sediment actually READS near the
-          // crust — combined with the quadratic falloff + patch
-          // modulation it integrates to a believable outer skin of
-          // dark specks that thins with depth.
-          if (spawnF < 0.42 * densityF) {
+          // Heavy base rate so sediment reads as a dense dusting
+          // right at the shell — combined with the quadratic falloff
+          // + patch modulation it integrates to a believable outer
+          // skin of dark specks that thins with depth.
+          if (spawnF < 0.70 * densityF) {
             const jx = (cellHash(cxF + seedOff, cyF ^ 907) - 0.5) * LAT_F * 0.9
             const jy = (cellHash(cxF ^ 131, cyF + seedOff) - 0.5) * LAT_F * 0.9
             const ddx = dx - (cxF * LAT_F + jx)
