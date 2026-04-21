@@ -660,16 +660,19 @@ export function computeColorWallBased(
         {
           const cxF = Math.round(dx / LAT_F)
           const cyF = Math.round(dy / LAT_F)
-          // Radial fallback envelope — quadratic decay.
+          // Radial envelope — quadratic decay that REACHES ZERO at the
+          // cutoff. Earlier versions added a 0.08 floor for "stochastic
+          // deep specks", but combined with the hard `cellsFromOuter
+          // < grainMaxCells` gate it produced a visible density jump
+          // (the 8% floor abruptly clipping to 0), reading as a clean
+          // band around the shell. Pure quadratic decay fades smoothly.
           const radial = (1 - distRatio) * (1 - distRatio)
           // Angular/patchy modulation. Low frequency (period ~60 cells)
           // so drifts span many lattice cells; rotated noise offsets
           // per band so adjacent bands don't align their patches.
           const patchN = valueNoise(dx * 0.017 + bandIdx * 31, dy * 0.017 - bandIdx * 17)
           const patchMod = 0.15 + patchN * 1.9 // 0.15 → 2.05 multiplier
-          // Stochastic tail — a small uniform base so rare specks
-          // appear even at full depth, scaled by the patch field.
-          const densityF = (radial * 0.92 + 0.08) * patchMod
+          const densityF = radial * patchMod
           const spawnF = cellHash(cxF * 239 + hueKey + seedOff, cyF * 421 + seedOff)
           // Heavy base rate so sediment actually READS near the
           // crust — combined with the quadratic falloff + patch
