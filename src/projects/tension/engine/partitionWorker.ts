@@ -8,32 +8,50 @@
 
 import { partitionCavities } from './CavityPartition'
 import { computeWallDistance } from './WallDistance'
-import type { Seed } from '../types'
+import { isPartitionRequest } from './partitionProtocol'
+import type { PartitionResponse } from './partitionProtocol'
 
-export interface PartitionRequest {
-  id: number
-  seeds: Seed[]
-  W: number
-  H: number
-  noiseScale: number
-  warpStrength: number
+/**
+ * The project's tsconfig loads the "DOM" lib project-wide, which
+ * declares a `Window`-typed `self`. The `webworker` lib referenced
+ * above declares a conflicting `DedicatedWorkerGlobalScope`-typed
+ * `self`. Rather than reach for `self as any`, narrow `globalThis`
+ * to just the surface this file actually uses.
+ */
+interface PartitionWorkerScope {
+  onmessage: ((event: MessageEvent<unknown>) => void) | null
+  postMessage(message: PartitionResponse, transfer: Transferable[]): void
 }
 
-export interface PartitionResponse {
-  id: number
-  gridBuffer: ArrayBuffer
-  wallBuffer: ArrayBuffer
+const ctx = globalThis as unknown as PartitionWorkerScope
+
+function asArrayBuffer(buffer: ArrayBufferLike, label: string): ArrayBuffer {
+  if (!(buffer instanceof ArrayBuffer)) {
+    throw new Error(`[partitionWorker] expected a transferable ArrayBuffer for ${label}`)
+  }
+  return buffer
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ctx: DedicatedWorkerGlobalScope = self as any
-
-ctx.onmessage = (evt: MessageEvent<PartitionRequest>) => {
-  const { id, seeds, W, H, noiseScale, warpStrength } = evt.data
+ctx.onmessage = (evt) => {
+  const data = evt.data
+  if (!isPartitionRequest(data)) {
+    console.error('[partitionWorker] dropped malformed request', data)
+    return
+  }
+  const { id, seeds, W, H, noiseScale, warpStrength } = data
   const { gridData } = partitionCavities(seeds, W, H, noiseScale, warpStrength)
   const wallDist = computeWallDistance(gridData, W, H)
-  const gridBuffer = gridData.buffer as ArrayBuffer
-  const wallBuffer = wallDist.buffer as ArrayBuffer
-  const response: PartitionResponse = { id, gridBuffer, wallBuffer }
+  const gridBuffer = asArrayBuffer(gridData.buffer, 'gridData')
+  const wallBuffer = asArrayBuffer(wallDist.buffer, 'wallDist')
+  const expectedBytes = W * H * Uint16Array.BYTES_PER_ELEMENT
+  if (gridBuffer.byteLength !== expectedBytes || wallBuffer.byteLength !== expectedBytes) {
+    console.error('[partitionWorker] buffer size mismatch', {
+      expectedBytes,
+      gridBufferBytes: gridBuffer.byteLength,
+      wallBufferBytes: wallBuffer.byteLength,
+    })
+    return
+  }
+  const response: PartitionResponse = { type: 'partition-response', id, gridBuffer, wallBuffer }
   ctx.postMessage(response, [gridBuffer, wallBuffer])
 }

@@ -26,6 +26,7 @@ export const projects: ArtProject[] = [
     id: 'id1',
     title: 'id1',
     description: 'Glass torus hovering on a fishing line above a walnut table. Photorealistic still-life with PBR materials and transmission glass.',
+    thumbnail: '/thumbnails/id1.png',
     route: '/projects/id1',
     status: 'wip',
     category: 'visualization',

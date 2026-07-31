@@ -437,7 +437,7 @@ function CardSection() {
         </Card>
 
         {/* Card with Footer */}
-        <Card interactive borderWidth="thick">
+        <Card interactive>
           <div
             className="relative w-full bg-[var(--color-surface-elevated)] flex items-center justify-center"
             style={{ aspectRatio: '16/9' }}
@@ -694,9 +694,6 @@ function ToggleGroupSection() {
   const [single, setSingle] = useState('grid');
   const [multi, setMulti] = useState<string[]>(['featured']);
 
-  const handleSingleChange = (v: string | string[]) => setSingle(v as string);
-  const handleMultiChange = (v: string | string[]) => setMulti(v as string[]);
-
   return (
     <section>
       <SectionHeader id="toggle-groups" title="Toggle Groups" description="Single or multi-select option buttons" />
@@ -705,7 +702,7 @@ function ToggleGroupSection() {
         {/* Single Select */}
         <div>
           <h3 className="text-display text-sm text-[var(--color-text-secondary)] mb-3">Single Select</h3>
-          <ToggleGroup type="single" value={single} onValueChange={handleSingleChange}>
+          <ToggleGroup type="single" value={single} onValueChange={setSingle}>
             <ToggleGroup.Item value="grid">Grid</ToggleGroup.Item>
             <ToggleGroup.Item value="list">List</ToggleGroup.Item>
             <ToggleGroup.Item value="masonry">Masonry</ToggleGroup.Item>
@@ -716,7 +713,7 @@ function ToggleGroupSection() {
         {/* Multiple Select */}
         <div>
           <h3 className="text-display text-sm text-[var(--color-text-secondary)] mb-3">Multiple Select</h3>
-          <ToggleGroup type="multiple" value={multi} onValueChange={handleMultiChange}>
+          <ToggleGroup type="multiple" value={multi} onValueChange={setMulti}>
             <ToggleGroup.Item value="featured">Featured</ToggleGroup.Item>
             <ToggleGroup.Item value="recent">Recent</ToggleGroup.Item>
             <ToggleGroup.Item value="archived">Archived</ToggleGroup.Item>
@@ -727,7 +724,7 @@ function ToggleGroupSection() {
         {/* Primary Variant */}
         <div>
           <h3 className="text-display text-sm text-[var(--color-text-secondary)] mb-3">Primary Variant</h3>
-          <ToggleGroup type="single" value={single} onValueChange={handleSingleChange} variant="primary">
+          <ToggleGroup type="single" value={single} onValueChange={setSingle} variant="primary">
             <ToggleGroup.Item value="all">All</ToggleGroup.Item>
             <ToggleGroup.Item value="photos">Photos</ToggleGroup.Item>
             <ToggleGroup.Item value="videos">Videos</ToggleGroup.Item>
@@ -801,25 +798,6 @@ function DiagonalDividerSection() {
             <span className="text-display">Item Two</span>
             <DiagonalDivider height="2.5rem" tone="accent" />
             <span className="text-display">Item Three</span>
-          </div>
-        </div>
-
-        {/* Variants */}
-        <div>
-          <h3 className="text-display text-sm text-[var(--color-text-secondary)] mb-3">Thickness Variants</h3>
-          <div className="flex items-center gap-8">
-            <div className="flex flex-col items-center gap-2">
-              <DiagonalDivider height="3rem" variant="default" />
-              <span className="text-code text-xs">Default</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <DiagonalDivider height="3rem" variant="thick" />
-              <span className="text-code text-xs">Thick</span>
-            </div>
-            <div className="flex flex-col items-center gap-2">
-              <DiagonalDivider height="3rem" variant="heavy" />
-              <span className="text-code text-xs">Heavy</span>
-            </div>
           </div>
         </div>
 

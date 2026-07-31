@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react'
-import { GameProvider, useGame, useGameState, useGameDispatch, GameActions } from '../state/GameContext'
+import { GameProvider, useGame } from '../state/GameContext'
 import { GameLoop } from '../engine/GameLoop'
 import { GameHUD } from './GameHUD'
 import { GameMenu } from './GameMenu'
@@ -31,18 +31,25 @@ function GameCanvas() {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    // Create game loop
-    const gameLoop = new GameLoop(canvas, dispatch, getState)
-    gameLoopRef.current = gameLoop
+    const controller = new AbortController()
 
-    // Initialize cycles from state
-    gameLoop.initializeCycles(state.cycles)
+    GameLoop.create(canvas, dispatch, getState, controller.signal).then((gameLoop) => {
+      gameLoopRef.current = gameLoop
 
-    // Start the loop
-    gameLoop.start()
+      // Initialize cycles from state
+      gameLoop.initializeCycles(stateRef.current.cycles)
+
+      // Start the loop
+      gameLoop.start()
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        console.error('Lightcycle WebGPU initialization failed', error)
+      }
+    })
 
     return () => {
-      gameLoop.dispose()
+      controller.abort()
+      gameLoopRef.current?.dispose()
       gameLoopRef.current = null
     }
     // Only run on mount

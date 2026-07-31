@@ -1,17 +1,19 @@
 import { Link, Outlet, createFileRoute } from '@tanstack/react-router'
-import type { User } from '../utils/users'
+import { parseUsers } from '../utils/users'
 
 export const Route = createFileRoute('/users')({
   loader: async () => {
     const res = await fetch('/api/users')
 
     if (!res.ok) {
-      throw new Error('Unexpected status code')
+      throw new Error(`Unexpected status code ${res.status}`)
     }
 
-    const data = await res.json()
-
-    return data as Array<User>
+    try {
+      return parseUsers(await res.json())
+    } catch (cause) {
+      throw new Error('Received malformed users data', { cause })
+    }
   },
   component: UsersComponent,
 })

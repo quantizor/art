@@ -5,7 +5,7 @@
  * High IOR (lead crystal) + dispersion for prismatic rainbow fringing.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 
 export function createGlassTorus(): THREE.Mesh {
   // Small torus — ring radius 0.16, tube radius 0.07

@@ -225,7 +225,6 @@ describe('AIController', () => {
     })
 
     test('hard AI uses weighted scoring for target selection', () => {
-      const ai = new AIController(collisionSystem)
       const self = createCycle('ai-1', { x: 0, z: 0 }, 'north', {
         aiProfile: getDefaultProfile('hard', 'aggressive'),
       })

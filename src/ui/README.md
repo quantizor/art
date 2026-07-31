@@ -54,20 +54,19 @@ Add to your root layout or main CSS file:
 
 ### 2. Ensure Tailwind is configured
 
-The design system uses Tailwind CSS v4. Make sure your `tailwind.config.js` includes the UI directory:
+The design system uses Tailwind CSS v4 via `@tailwindcss/vite`. App CSS pulls in the source tree and theme:
 
-```js
-export default {
-  content: [
-    './src/**/*.{ts,tsx}',
-  ],
-};
+```css
+@import 'tailwindcss' source('../');
+@import '../ui/theme.css';
 ```
+
+There is no `tailwind.config.js` in this project.
 
 ### 3. Import components
 
 ```tsx
-import { Button, Card, Badge, ToggleGroup } from '@/ui';
+import { Button, Card, Badge, ToggleGroup } from '~/ui';
 ```
 
 ## Component Reference
@@ -211,13 +210,12 @@ Group related buttons with diagonal separators.
 
 ### DiagonalDivider
 
-Standalone diagonal separator primitive.
+Standalone diagonal separator primitive. All dividers are hairline; use `tone` for color.
 
-**Variants:** `default` | `thick` | `heavy`
-**Colors:** `default` | `accent` | `strong`
+**Tones:** `default` | `accent` | `strong`
 
 ```tsx
-<DiagonalDivider variant="thick" color="accent" height="3rem" />
+<DiagonalDivider tone="accent" height="3rem" />
 ```
 
 ## Design Tokens
@@ -227,7 +225,7 @@ Design tokens are available as TypeScript constants and CSS custom properties.
 ### TypeScript Usage
 
 ```tsx
-import { colors, spacing, typography } from '@/ui/primitives';
+import { colors, spacing, typography } from '~/ui/primitives';
 
 const style = {
   backgroundColor: colors.black,
@@ -384,7 +382,7 @@ All components include:
 All components export their CVA variant configurations:
 
 ```tsx
-import { buttonVariants } from '@/ui';
+import { buttonVariants } from '~/ui';
 
 // Create custom button variant
 const customButton = buttonVariants({
@@ -412,7 +410,7 @@ Override CSS custom properties in your own CSS:
 Extend existing components:
 
 ```tsx
-import { Button, type ButtonProps } from '@/ui';
+import { Button, type ButtonProps } from '~/ui';
 
 function IconButton({ icon, ...props }: ButtonProps & { icon: ReactNode }) {
   return (

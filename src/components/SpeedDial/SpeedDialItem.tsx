@@ -6,7 +6,7 @@
  */
 
 import { Link } from '@tanstack/react-router';
-import { Card, CardContent, CardTitle, CardMeta, CardFooter, Badge } from '~/ui';
+import { Card, CardTitle, CardMeta, Badge } from '~/ui';
 import type { ArtProject } from '~/types/projects';
 
 export interface SpeedDialItemProps {

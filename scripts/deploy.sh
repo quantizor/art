@@ -7,10 +7,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOCS="$ROOT/docs"
-# Use an uncommon port so a running dev server on :3000 can't accidentally
-# answer our prerender curls and bake dev-mode HTML into docs/. Regression:
-# commit e7f42e6 shipped docs/*.html referencing /src/styles/app.css and
-# /@react-refresh because port 3000 was occupied during deploy.
+# Use an uncommon port so a running Vite server on :3000/:3010 can't
+# accidentally answer our prerender curls and bake dev-mode HTML into docs/.
+# Regression: commit e7f42e6 shipped docs/*.html referencing /src/styles/app.css and
+# /@react-refresh because the prerender port was occupied during deploy.
 PORT=4173
 
 echo "==> Building..."
@@ -48,21 +48,12 @@ if printf '%s' "$PROBE" | grep -qE '/@react-refresh|/@id/virtual:|/src/styles/|d
   exit 1
 fi
 
-# Preserve hand-authored content (e.g. docs/research/) across the rebuild.
-PRESERVE_TMP="$(mktemp -d)"
-trap "kill $SERVER_PID 2>/dev/null || true; rm -rf \"$PRESERVE_TMP\"" EXIT
-for dir in research; do
-  [ -d "$DOCS/$dir" ] && cp -r "$DOCS/$dir" "$PRESERVE_TMP/"
-done
+trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
-# Clean and seed with static assets
+# Clean and seed with static assets. Hand-authored research lives under
+# research/ at the repo root, not under docs/.
 rm -rf "$DOCS"
 cp -r .output/public "$DOCS"
-
-# Restore preserved content
-for dir in research; do
-  [ -d "$PRESERVE_TMP/$dir" ] && cp -r "$PRESERVE_TMP/$dir" "$DOCS/"
-done
 
 # Prerender routes
 for route in / /projects/id1 /projects/tension /ui; do

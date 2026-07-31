@@ -5,18 +5,25 @@
  * approach. Each trail point has a timestamp, enabling time-based fading and
  * expiry. The trail follows the racer in 3D, including during jumps.
  *
- * Uses a ShaderMaterial with per-vertex alpha for smooth fade-out of older
- * trail sections, and a BufferGeometry ribbon (quad-strip) for performance.
+ * The mesh is allocated once at `MAX_TRAIL_POINTS` capacity and reused for
+ * the racer's lifetime: `rebuildMesh` overwrites the position/alpha
+ * attributes in place and narrows `setDrawRange` to the active point count,
+ * rather than disposing and recreating a `BufferGeometry` every frame.
  */
 
-import * as THREE from 'three'
-import { TRAIL_HEIGHT, TRAIL_WIDTH, TRAIL_LIFETIME, TRAIL_FADE_DURATION } from '../constants'
+import * as THREE from 'three/webgpu'
+import { attribute, uniform } from 'three/tsl'
+import { MAX_TRAIL_POINTS, TRAIL_HEIGHT, TRAIL_WIDTH, TRAIL_LIFETIME, TRAIL_FADE_DURATION } from '../constants'
+import {
+  INDICES_PER_SEGMENT,
+  VERTICES_PER_POINT,
+  accumulateTravel,
+  buildTrailIndices,
+  shouldAddControlPoint,
+} from './trailPointLogic'
 
 /** Minimum distance between control points to avoid degenerate geometry */
 const MIN_POINT_DISTANCE = 0.5
-
-/** How often to add new control points (in world units of travel) */
-const POINT_SPACING = 2.0
 
 interface TrailPoint {
   position: THREE.Vector3
@@ -26,13 +33,25 @@ interface TrailPoint {
 export class TrailRenderer {
   group: THREE.Group
   private color: number
-  private material: THREE.ShaderMaterial
+  private material: THREE.MeshBasicNodeMaterial
+  private colorUniform
+  private baseOpacityUniform
 
   /** Timestamped control points for the trail */
   private trailPoints: TrailPoint[] = []
 
-  /** The current trail mesh */
-  private mesh: THREE.Mesh | null = null
+  /** Fixed-capacity ribbon mesh, allocated once and updated in place */
+  private geometry: THREE.BufferGeometry
+  private mesh: THREE.Mesh
+  private positions: Float32Array
+  private alphas: Float32Array
+  private positionAttribute: THREE.BufferAttribute
+  private alphaAttribute: THREE.BufferAttribute
+  private renderPoints: TrailPoint[] = []
+  private livePoint: TrailPoint = {
+    position: new THREE.Vector3(),
+    timestamp: 0,
+  }
 
   /** Track distance since last point for spacing */
   private distanceSinceLastPoint = 0
@@ -47,38 +66,38 @@ export class TrailRenderer {
     this.color = color
     this.group = new THREE.Group()
 
-    const threeColor = new THREE.Color(color)
+    this.colorUniform = uniform(new THREE.Color(color))
+    this.baseOpacityUniform = uniform(0.35)
+    const emissiveBoostUniform = uniform(1.8)
+    const vAlpha = attribute<'float'>('alpha', 'float')
 
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        color: { value: threeColor },
-        baseOpacity: { value: 0.35 },
-        emissiveBoost: { value: 1.8 },
-      },
-      vertexShader: `
-        attribute float alpha;
-        varying float vAlpha;
-        void main() {
-          vAlpha = alpha;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 color;
-        uniform float baseOpacity;
-        uniform float emissiveBoost;
-        varying float vAlpha;
-        void main() {
-          float finalAlpha = baseOpacity * vAlpha;
-          vec3 finalColor = color * emissiveBoost;
-          gl_FragColor = vec4(finalColor, finalAlpha);
-        }
-      `,
+    this.material = new THREE.MeshBasicNodeMaterial({
       transparent: true,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })
+    this.material.colorNode = this.colorUniform.mul(emissiveBoostUniform)
+    this.material.opacityNode = this.baseOpacityUniform.mul(vAlpha)
+
+    this.positions = new Float32Array(MAX_TRAIL_POINTS * VERTICES_PER_POINT * 3)
+    this.alphas = new Float32Array(MAX_TRAIL_POINTS * VERTICES_PER_POINT)
+
+    this.positionAttribute = new THREE.BufferAttribute(this.positions, 3)
+      .setUsage(THREE.DynamicDrawUsage)
+    this.alphaAttribute = new THREE.BufferAttribute(this.alphas, 1)
+      .setUsage(THREE.DynamicDrawUsage)
+    this.geometry = new THREE.BufferGeometry()
+    this.geometry.setAttribute('position', this.positionAttribute)
+    this.geometry.setAttribute('alpha', this.alphaAttribute)
+    this.geometry.setIndex(buildTrailIndices(MAX_TRAIL_POINTS))
+    this.geometry.setDrawRange(0, 0)
+
+    this.mesh = new THREE.Mesh(this.geometry, this.material)
+    // Bounds vary every frame and the ribbon is always near the racer, so
+    // frustum culling adds recompute cost without a visible payoff.
+    this.mesh.frustumCulled = false
+    this.group.add(this.mesh)
   }
 
   /**
@@ -89,7 +108,7 @@ export class TrailRenderer {
       position: new THREE.Vector3(position.x, position.y, position.z),
       timestamp: performance.now(),
     })
-    this.lastPosition = { ...position }
+    this.lastPosition = { x: position.x, y: position.y, z: position.z }
     this.distanceSinceLastPoint = 0
   }
 
@@ -102,17 +121,13 @@ export class TrailRenderer {
       return
     }
 
-    // Calculate distance from last position
-    if (this.lastPosition) {
-      const dx = newEnd.x - this.lastPosition.x
-      const dy = newEnd.y - this.lastPosition.y
-      const dz = newEnd.z - this.lastPosition.z
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
-      this.distanceSinceLastPoint += distance
-    }
+    this.distanceSinceLastPoint = accumulateTravel(
+      this.lastPosition,
+      newEnd,
+      this.distanceSinceLastPoint,
+    )
 
-    // Add a new control point if we've traveled far enough
-    if (this.distanceSinceLastPoint >= POINT_SPACING) {
+    if (shouldAddControlPoint(this.distanceSinceLastPoint)) {
       this.trailPoints.push({
         position: new THREE.Vector3(newEnd.x, newEnd.y, newEnd.z),
         timestamp: performance.now(),
@@ -120,7 +135,14 @@ export class TrailRenderer {
       this.distanceSinceLastPoint = 0
     }
 
-    this.lastPosition = { ...newEnd }
+    const lastPosition = this.lastPosition
+    if (lastPosition) {
+      lastPosition.x = newEnd.x
+      lastPosition.y = newEnd.y
+      lastPosition.z = newEnd.z
+    } else {
+      this.lastPosition = { x: newEnd.x, y: newEnd.y, z: newEnd.z }
+    }
 
     // Rebuild the trail mesh
     this.rebuildMesh(newEnd)
@@ -134,7 +156,9 @@ export class TrailRenderer {
   }
 
   /**
-   * Get active trail points, pruning expired ones from the front
+   * Get active trail points, pruning expired ones from the front and
+   * capping the total at `MAX_TRAIL_POINTS` so the fixed-capacity buffers
+   * never overflow.
    */
   private getActivePoints(currentEnd: { x: number; y: number; z: number }): TrailPoint[] {
     const now = performance.now()
@@ -146,20 +170,32 @@ export class TrailRenderer {
     )
 
     if (firstActiveIndex > 0) {
-      this.trailPoints = this.trailPoints.slice(firstActiveIndex)
+      this.trailPoints.copyWithin(0, firstActiveIndex)
+      this.trailPoints.length -= firstActiveIndex
     } else if (firstActiveIndex === -1 && this.trailPoints.length > 0) {
       // All points expired -- keep just the last one as an anchor
-      this.trailPoints = [this.trailPoints[this.trailPoints.length - 1]]
+      this.trailPoints[0] = this.trailPoints[this.trailPoints.length - 1]
+      this.trailPoints.length = 1
     }
 
-    // Build the full point list, always including the current end position
-    // to prevent the ribbon from stuttering/snapping near the racer
-    const allPoints = [...this.trailPoints]
-
-    const endPoint: TrailPoint = {
-      position: new THREE.Vector3(currentEnd.x, currentEnd.y, currentEnd.z),
-      timestamp: now,
+    // Defensive cap: guards the fixed-capacity buffers even if travel speed
+    // or spacing changes push the natural point count past MAX_TRAIL_POINTS.
+    const capacityForLivePoint = MAX_TRAIL_POINTS - 1
+    if (this.trailPoints.length > capacityForLivePoint) {
+      const firstKept = this.trailPoints.length - capacityForLivePoint
+      this.trailPoints.copyWithin(0, firstKept)
+      this.trailPoints.length = capacityForLivePoint
     }
+
+    // Reuse the render list and live tip so a physics tick does not allocate.
+    const allPoints = this.renderPoints
+    allPoints.length = this.trailPoints.length
+    for (let i = 0; i < this.trailPoints.length; i++) {
+      allPoints[i] = this.trailPoints[i]
+    }
+    const endPoint = this.livePoint
+    endPoint.position.set(currentEnd.x, currentEnd.y, currentEnd.z)
+    endPoint.timestamp = now
 
     // Always append the current end position so the ribbon smoothly
     // extends to the racer. If it's very close to the last control point,
@@ -177,25 +213,19 @@ export class TrailRenderer {
   }
 
   /**
-   * Rebuild the trail mesh from current points as a ribbon geometry
+   * Rebuild the trail mesh from current points as a ribbon geometry.
+   * Writes into the preallocated position/alpha buffers in place and
+   * narrows the draw range, never allocating a new geometry or mesh.
    */
   private rebuildMesh(currentEnd: { x: number; y: number; z: number }): void {
-    // Dispose old mesh geometry
-    if (this.mesh) {
-      this.mesh.geometry.dispose()
-      this.group.remove(this.mesh)
-      this.mesh = null
+    const allPoints = this.getActivePoints(currentEnd)
+    if (allPoints.length < 2) {
+      this.geometry.setDrawRange(0, 0)
+      return
     }
 
-    const allPoints = this.getActivePoints(currentEnd)
-    if (allPoints.length < 2) return
-
     const now = performance.now()
-    // 4 vertices per point: left-bottom, left-top, right-bottom, right-top
-    // This creates a wall with actual width, visible from all angles
-    const vertexCount = allPoints.length * 4
-    const positions = new Float32Array(vertexCount * 3)
-    const alphas = new Float32Array(vertexCount)
+    const { positions, alphas } = this
 
     for (let i = 0; i < allPoints.length; i++) {
       const pt = allPoints[i]
@@ -225,7 +255,7 @@ export class TrailRenderer {
       const perpX = (-dz / len) * (TRAIL_WIDTH / 2)
       const perpZ = (dx / len) * (TRAIL_WIDTH / 2)
 
-      const baseIdx = i * 4
+      const baseIdx = i * VERTICES_PER_POINT
 
       // Left-bottom vertex
       positions[(baseIdx + 0) * 3 + 0] = pt.position.x - perpX
@@ -253,35 +283,10 @@ export class TrailRenderer {
       alphas[baseIdx + 3] = alpha
     }
 
-    // Build index buffer: for each pair of adjacent points, create
-    // 3 quad faces: left wall, right wall, and top cap
-    const indices: number[] = []
-    for (let i = 0; i < allPoints.length - 1; i++) {
-      const a = i * 4       // current point base
-      const b = (i + 1) * 4 // next point base
-      // Vertex layout per point: 0=LB, 1=LT, 2=RB, 3=RT
+    this.positionAttribute.needsUpdate = true
+    this.alphaAttribute.needsUpdate = true
 
-      // Left face (facing outward-left)
-      indices.push(a + 0, b + 0, a + 1)
-      indices.push(a + 1, b + 0, b + 1)
-
-      // Right face (facing outward-right)
-      indices.push(a + 2, a + 3, b + 2)
-      indices.push(a + 3, b + 3, b + 2)
-
-      // Top cap (facing up)
-      indices.push(a + 1, b + 1, a + 3)
-      indices.push(a + 3, b + 1, b + 3)
-    }
-
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1))
-    geometry.setIndex(indices)
-    geometry.computeVertexNormals()
-
-    this.mesh = new THREE.Mesh(geometry, this.material)
-    this.group.add(this.mesh)
+    this.geometry.setDrawRange(0, (allPoints.length - 1) * INDICES_PER_SEGMENT)
   }
 
   /**
@@ -358,7 +363,7 @@ export class TrailRenderer {
    */
   setColor(color: number): void {
     this.color = color
-    this.material.uniforms.color.value = new THREE.Color(color)
+    this.colorUniform.value = new THREE.Color(color)
   }
 
   /**
@@ -387,22 +392,19 @@ export class TrailRenderer {
    * Clear all trail data
    */
   clear(): void {
-    if (this.mesh) {
-      this.mesh.geometry.dispose()
-      this.group.remove(this.mesh)
-      this.mesh = null
-    }
+    this.geometry.setDrawRange(0, 0)
     this.trailPoints = []
     this.lastPosition = null
     this.distanceSinceLastPoint = 0
     this.isFadingOut = false
 
-    // Reset material uniforms
-    this.material.uniforms.baseOpacity.value = 0.35
+    // Reset material uniform
+    this.baseOpacityUniform.value = 0.35
   }
 
   dispose(): void {
     this.clear()
+    this.geometry.dispose()
     this.material.dispose()
   }
 }

@@ -4,8 +4,6 @@
  * Core type definitions for the lightcycle game engine.
  */
 
-import type * as THREE from 'three'
-
 /**
  * Game phase state machine
  */
@@ -263,16 +261,4 @@ export interface AIStrategyPreferences {
   minPersistence: number
   /** Max ticks before strategy is forcibly reconsidered */
   maxPersistence: number
-}
-
-/**
- * Three.js object references for cleanup
- */
-export interface SceneObjects {
-  scene: THREE.Scene
-  camera: THREE.PerspectiveCamera
-  renderer: THREE.WebGLRenderer
-  cycleModels: Map<string, THREE.Group>
-  trailMeshes: Map<string, THREE.Mesh[]>
-  arena: THREE.Group
 }

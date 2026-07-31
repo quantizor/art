@@ -297,8 +297,6 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       )
 
       const aliveCycles = updatedCycles.filter((c) => c.isAlive)
-      const playerAlive = aliveCycles.some((c) => c.isPlayer)
-      const aiAlive = aliveCycles.some((c) => !c.isPlayer)
 
       // Game ends only when there's a clear winner or all are dead
       // If player dies, game continues until AI finish fighting

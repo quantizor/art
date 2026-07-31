@@ -6,7 +6,7 @@
  * and transmission glass.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 import { useEffect, useRef, useState } from 'react'
 import { ProjectShell } from '~/components/ProjectShell'
 import { SceneManager } from '../scene/SceneManager'
@@ -48,151 +48,162 @@ export function Id1Viewer() {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const manager = new SceneManager(canvas)
-    sceneRef.current = manager
+    const controller = new AbortController()
+    let cleanupScene: (() => void) | null = null
 
-    // Build scene
-    createLighting(manager.scene)
+    SceneManager.create(canvas, controller.signal).then((manager) => {
+      sceneRef.current = manager
 
-    const table = createTable()
-    table.scale.set(0, 0, 0)
-    manager.scene.add(table)
+      // Build scene
+      createLighting(manager.scene)
 
-    const torus = createGlassTorus()
-    torus.scale.set(0, 0, 0)
-    manager.scene.add(torus)
+      const table = createTable()
+      table.scale.set(0, 0, 0)
+      manager.scene.add(table)
 
-    // Load HDRI environment for reflections
-    manager.loadEnvironment('/textures/env/studio_small_09_1k.hdr')
+      const torus = createGlassTorus()
+      torus.scale.set(0, 0, 0)
+      manager.scene.add(torus)
 
-    // Entry animations — staggered elastic pop-in
-    const entries: EntryAnim[] = [
-      {
-        elapsed: 0, duration: 0.9, delay: 0.1,
-        apply: (p) => { const s = elasticOut(p); table.scale.set(s, s, s) },
-      },
-      {
-        elapsed: 0, duration: 0.8, delay: 0.4,
-        apply: (p) => { const s = elasticOut(p); torus.scale.set(s, s, s) },
-      },
-    ]
-    let animsDone = false
+      // Load HDRI environment for reflections
+      manager.loadEnvironment('/textures/env/studio_small_09_1k.hdr')
 
-    // WASD keyboard panning
-    const keysDown = new Set<string>()
-    const PAN_SPEED = 1.5
-    const panOffset = new THREE.Vector3()
+      // Entry animations — staggered elastic pop-in
+      const entries: EntryAnim[] = [
+        {
+          elapsed: 0, duration: 0.9, delay: 0.1,
+          apply: (p) => { const s = elasticOut(p); table.scale.set(s, s, s) },
+        },
+        {
+          elapsed: 0, duration: 0.8, delay: 0.4,
+          apply: (p) => { const s = elasticOut(p); torus.scale.set(s, s, s) },
+        },
+      ]
+      let animsDone = false
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (['w', 'a', 's', 'd'].includes(e.key.toLowerCase())) {
-        keysDown.add(e.key.toLowerCase())
-        e.preventDefault()
+      // WASD keyboard panning
+      const keysDown = new Set<string>()
+      const PAN_SPEED = 1.5
+      const panOffset = new THREE.Vector3()
+
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (['w', 'a', 's', 'd'].includes(e.key.toLowerCase())) {
+          keysDown.add(e.key.toLowerCase())
+          e.preventDefault()
+        }
       }
-    }
-    const onKeyUp = (e: KeyboardEvent) => {
-      keysDown.delete(e.key.toLowerCase())
-    }
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
+      const onKeyUp = (e: KeyboardEvent) => {
+        keysDown.delete(e.key.toLowerCase())
+      }
+      window.addEventListener('keydown', onKeyDown, { signal: controller.signal })
+      window.addEventListener('keyup', onKeyUp, { signal: controller.signal })
 
-    // Resize handler
-    const onResize = () => manager.resize()
-    window.addEventListener('resize', onResize)
+      // Resize handler
+      const onResize = () => manager.resize()
+      window.addEventListener('resize', onResize, { signal: controller.signal })
 
-    // Animation loop — pauses when tab is hidden
-    let smoothedFrameTime = 0
-    let lastTime = 0
-    let frameCount = 0
-    let running = true
+      // Animation loop — pauses when tab is hidden
+      let smoothedFrameTime = 0
+      let lastTime = 0
+      let frameCount = 0
+      let running = true
 
-    const animate = (time: number) => {
-      if (!running) return
+      const animate = (time: number) => {
+        if (!running) return
+        rafRef.current = requestAnimationFrame(animate)
+
+        const dt = lastTime ? (time - lastTime) / 1000 : 0.016
+        lastTime = time
+        frameCount++
+
+        // FPS tracking
+        const frameMs = dt * 1000
+        smoothedFrameTime =
+          smoothedFrameTime === 0
+            ? frameMs
+            : smoothedFrameTime * 0.85 + frameMs * 0.15
+        if (frameCount % 15 === 0) {
+          setFps(
+            smoothedFrameTime > 0
+              ? Math.round(1000 / smoothedFrameTime)
+              : 0,
+          )
+          setCam(manager.getCameraInfo())
+        }
+
+        // Entry animations
+        if (!animsDone) {
+          let allDone = true
+          for (const entry of entries) {
+            entry.elapsed += dt
+            const t = entry.elapsed - entry.delay
+            if (t < 0) {
+              allDone = false
+            } else {
+              const progress = Math.min(t / entry.duration, 1)
+              entry.apply(progress)
+              if (progress < 1) allDone = false
+            }
+          }
+          animsDone = allDone
+        }
+
+        // WASD panning — move camera + target together on camera-relative XY
+        if (keysDown.size > 0) {
+          panOffset.set(0, 0, 0)
+          const cam = manager.camera
+          // Camera-right vector (X axis in camera space)
+          const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0)
+          // World up for vertical movement
+          const up = new THREE.Vector3(0, 1, 0)
+
+          if (keysDown.has('a')) panOffset.addScaledVector(right, -PAN_SPEED * dt)
+          if (keysDown.has('d')) panOffset.addScaledVector(right, PAN_SPEED * dt)
+          if (keysDown.has('w')) panOffset.addScaledVector(up, -PAN_SPEED * dt)
+          if (keysDown.has('s')) panOffset.addScaledVector(up, PAN_SPEED * dt)
+
+          cam.position.add(panOffset)
+          manager.controls.target.add(panOffset)
+        }
+
+        // Slow auto-rotation on the torus
+        torus.rotation.y += 0.3 * dt
+
+        manager.render()
+      }
+
+      const onVisibilityChange = () => {
+        if (document.hidden) {
+          running = false
+          cancelAnimationFrame(rafRef.current)
+        } else {
+          running = true
+          lastTime = 0 // reset so first frame doesn't get a huge dt
+          smoothedFrameTime = 0
+          rafRef.current = requestAnimationFrame(animate)
+        }
+      }
+      document.addEventListener('visibilitychange', onVisibilityChange, {
+        signal: controller.signal,
+      })
+
       rafRef.current = requestAnimationFrame(animate)
 
-      const dt = lastTime ? (time - lastTime) / 1000 : 0.016
-      lastTime = time
-      frameCount++
-
-      // FPS tracking
-      const frameMs = dt * 1000
-      smoothedFrameTime =
-        smoothedFrameTime === 0
-          ? frameMs
-          : smoothedFrameTime * 0.85 + frameMs * 0.15
-      if (frameCount % 15 === 0) {
-        setFps(
-          smoothedFrameTime > 0
-            ? Math.round(1000 / smoothedFrameTime)
-            : 0,
-        )
-        setCam(manager.getCameraInfo())
-      }
-
-      // Entry animations
-      if (!animsDone) {
-        let allDone = true
-        for (const entry of entries) {
-          entry.elapsed += dt
-          const t = entry.elapsed - entry.delay
-          if (t < 0) {
-            allDone = false
-          } else {
-            const progress = Math.min(t / entry.duration, 1)
-            entry.apply(progress)
-            if (progress < 1) allDone = false
-          }
-        }
-        animsDone = allDone
-      }
-
-      // WASD panning — move camera + target together on camera-relative XY
-      if (keysDown.size > 0) {
-        panOffset.set(0, 0, 0)
-        const cam = manager.camera
-        // Camera-right vector (X axis in camera space)
-        const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0)
-        // World up for vertical movement
-        const up = new THREE.Vector3(0, 1, 0)
-
-        if (keysDown.has('a')) panOffset.addScaledVector(right, -PAN_SPEED * dt)
-        if (keysDown.has('d')) panOffset.addScaledVector(right, PAN_SPEED * dt)
-        if (keysDown.has('w')) panOffset.addScaledVector(up, -PAN_SPEED * dt)
-        if (keysDown.has('s')) panOffset.addScaledVector(up, PAN_SPEED * dt)
-
-        cam.position.add(panOffset)
-        manager.controls.target.add(panOffset)
-      }
-
-      // Slow auto-rotation on the torus
-      torus.rotation.y += 0.3 * dt
-
-      manager.render()
-    }
-
-    const onVisibilityChange = () => {
-      if (document.hidden) {
+      cleanupScene = () => {
         running = false
         cancelAnimationFrame(rafRef.current)
-      } else {
-        running = true
-        lastTime = 0 // reset so first frame doesn't get a huge dt
-        smoothedFrameTime = 0
-        rafRef.current = requestAnimationFrame(animate)
+        manager.dispose()
+        sceneRef.current = null
       }
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-
-    rafRef.current = requestAnimationFrame(animate)
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        console.error('id1 WebGPU initialization failed', error)
+      }
+    })
 
     return () => {
-      running = false
-      cancelAnimationFrame(rafRef.current)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
-      window.removeEventListener('resize', onResize)
-      manager.dispose()
-      sceneRef.current = null
+      controller.abort()
+      cleanupScene?.()
     }
   }, [])
 

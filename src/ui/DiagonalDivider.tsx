@@ -6,7 +6,7 @@
  *
  * @example
  * <DiagonalDivider />
- * <DiagonalDivider variant="thick" />
+ * <DiagonalDivider tone="accent" />
  * <DiagonalDivider className="h-8" />
  */
 
@@ -37,30 +37,20 @@ export interface DiagonalDividerProps
    * Use className with h-* utilities to control.
    */
   height?: string | number;
-  /**
-   * @deprecated Use `tone` instead
-   */
-  color?: 'default' | 'accent' | 'strong';
-  /**
-   * @deprecated Removed - all dividers are now hairline
-   */
-  variant?: unknown;
 }
 
 export function DiagonalDivider({
   tone,
-  color,
   height,
   className,
   style,
   ...props
 }: DiagonalDividerProps) {
-  const resolvedTone = tone ?? color;
   return (
     <div
       role="separator"
       aria-orientation="vertical"
-      className={dividerVariants({ tone: resolvedTone, className })}
+      className={dividerVariants({ tone, className })}
       style={{
         height: typeof height === 'number' ? `${height}px` : height,
         ...style,

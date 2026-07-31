@@ -12,7 +12,7 @@ import { CrystalRenderer } from '../scene/CrystalRenderer'
 import { FloodFillSimulation } from '../engine/FloodFillSimulation'
 import { generateSeedPositions } from '../engine/SeedPlacer'
 import { runPartition } from '../engine/partitionService'
-import { setActiveProfile, setVariantOverride, type VariantPreset } from '../engine/ColorMapper'
+import { setActiveProfile, setVariantOverride, VARIANT_PRESETS, type VariantPreset } from '../engine/ColorMapper'
 import { ControlPanel } from './ControlPanel'
 import { profile as agateProfile } from '../profiles'
 import {
@@ -24,20 +24,33 @@ import {
 } from '../engine/SeededRandom'
 import {
   DEFAULT_SIM_PARAMS,
-  DEFAULT_COLOR_PARAMS,
   MAX_DELTA,
   MAX_PARTICLES,
   SEED_MIN_DISTANCE,
   GRID_WIDTH,
   GRID_HEIGHT,
-  GRID_SCALE,
 } from '../constants'
 import type { CrystalProfile, SimulationParams, ColorParams, SimulationPhase } from '../types'
 
+// Dev-only imperative handles so an external driver (preview_eval, a
+// remote agent iterating on shading code) can run generations and poll
+// for completion without a human in the loop. See the effect below.
+declare global {
+  interface Window {
+    __tensionRandomize?: () => void
+    __tensionSetSeed?: (s: string) => void
+    __tensionSeed?: string
+    __tensionLastRevealAt?: number | null
+    __tensionPumpToComplete?: (
+      maxFrames?: number,
+      fps?: number
+    ) => Promise<{ done: boolean; frames?: number; phase?: SimulationPhase }>
+  }
+}
+
 const STORAGE_KEYS = {
-  variant: 'tension:variant',
-  onionSplit: 'tension:onionSplit',
   seedCount: 'tension:seedCount',
+  variant: 'tension:variant',
 } as const
 
 /** Read a persisted integer setting within [min, max], falling back to default. */
@@ -74,8 +87,6 @@ function savePref(key: string, value: string): void {
   }
 }
 
-const VARIANT_OPTIONS = ['random', 'iris', 'onyx', 'zonal', 'dyed'] as const satisfies readonly VariantPreset[]
-
 /** Generate randomized color params from a crystal profile */
 function randomParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.random): ColorParams {
   const [wlMin, wlMax] = profile.bandWavelengthRange
@@ -104,84 +115,6 @@ function randomSimParamsFromProfile(profile: CrystalProfile, rng: PRNG = Math.ra
 }
 
 
-/**
- * Dev-only draggable vertical divider over the canvas. Left of the
- * line shows A (baseline), right shows B (current experimental
- * candidate). The actual wipe is applied in the renderer; this
- * component only emits the normalized split position (0..1). Styled
- * to match the ControlPanel aesthetic — brutalist monospace, sharp
- * edges, mix-blend-difference so it reads over any band colour.
- */
-function OnionSkinHandle({
-  value,
-  onChange,
-}: {
-  value: number
-  onChange: (v: number) => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const draggingRef = useRef(false)
-
-  const updateFromEvent = useCallback((clientX: number) => {
-    const el = ref.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    if (rect.width <= 0) return
-    const v = (clientX - rect.left) / rect.width
-    onChange(v < 0 ? 0 : v > 1 ? 1 : v)
-  }, [onChange])
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    draggingRef.current = true
-    e.currentTarget.setPointerCapture(e.pointerId)
-    updateFromEvent(e.clientX)
-  }
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draggingRef.current) return
-    updateFromEvent(e.clientX)
-  }
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    draggingRef.current = false
-    e.currentTarget.releasePointerCapture(e.pointerId)
-  }
-
-  const pct = `${value * 100}%`
-
-  return (
-    <div
-      ref={ref}
-      className="absolute inset-0 pointer-events-none select-none"
-      aria-label="A/B comparison handle"
-    >
-      {/* Vertical divider — thin line that reads on any band colour. */}
-      <div
-        className="absolute top-0 bottom-0 w-px bg-white mix-blend-difference pointer-events-none"
-        style={{ left: pct, transform: 'translateX(-0.5px)' }}
-      />
-      {/* Drag hit area — 24 px wide strip centred on the line. */}
-      <div
-        className="absolute top-0 bottom-0 w-6 cursor-ew-resize pointer-events-auto"
-        style={{ left: pct, transform: 'translateX(-50%)' }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        {/* Grip — matches ControlPanel aesthetic: black fill, default
-            border, monospace micro-label. A and B letters flank the
-            divider so orientation is explicit without side labels. */}
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/80 border border-[var(--color-border-default)] text-white/80 hover:text-white text-[10px] uppercase tracking-widest font-mono flex items-center"
-          aria-hidden
-        >
-          <span className="px-2 py-1 border-r border-[var(--color-border-default)]">A</span>
-          <span className="px-2 py-1">B</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export function CrystalGrowthViewer() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRef = useRef<SceneManager | null>(null)
@@ -194,12 +127,10 @@ export function CrystalGrowthViewer() {
   const [phase, setPhase] = useState<SimulationPhase>('idle')
   const [particleCount, setParticleCount] = useState(0)
   const [fps, setFps] = useState(0)
-  const fpsFramesRef = useRef(0)
-  const fpsTimeRef = useRef(0)
 
   // Seed-based deterministic PRNG — the seed string fully determines the design.
-  // Dev honours `?seed=xyz` in the URL so a code change can be replayed against
-  // the exact same generation for rigorous A/B evaluation.
+  // Dev honors `?seed=xyz` in the URL so a code change can be replayed against
+  // the exact same generation for visual comparison.
   const [seedString, setSeedString] = useState(() => {
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       const q = new URLSearchParams(window.location.search).get('seed')
@@ -225,63 +156,10 @@ export function CrystalGrowthViewer() {
     return randomParamsFromProfile(agateProfile, colorRng)
   })
   const [variant, setVariant] = useState<VariantPreset>(
-    () => loadPref<VariantPreset>(STORAGE_KEYS.variant, 'random', VARIANT_OPTIONS)
+    () => loadPref<VariantPreset>(STORAGE_KEYS.variant, 'random', VARIANT_PRESETS)
   )
-  // Dev-only onion-skin wipe position (0 = everything enhanced, 1 =
-  // everything classic, 0.5 = split at centre). Hydration-safe: both
-  // server and first client render use 0.5, then a post-mount effect
-  // reads the persisted value. Starting with localStorage in the
-  // useState initializer causes an SSR/client attribute mismatch on
-  // the handle's `left` inline style.
-  const [onionSplit, setOnionSplit] = useState<number>(0.5)
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEYS.onionSplit)
-      if (raw == null) return
-      const n = Number(raw)
-      if (Number.isFinite(n)) setOnionSplit(Math.min(1, Math.max(0, n)))
-    } catch {
-      // ignore
-    }
-  }, [])
-
   useEffect(() => { savePref(STORAGE_KEYS.variant, variant) }, [variant])
   useEffect(() => { savePref(STORAGE_KEYS.seedCount, String(simParams.seedCount)) }, [simParams.seedCount])
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    savePref(STORAGE_KEYS.onionSplit, String(onionSplit))
-    const r = rendererRef.current
-    if (!r) return
-    r.setOnionSplit(onionSplit)
-    // Post-reveal the animation loop is idle, so the re-paint won't
-    // reach the GPU unless we push it manually.
-    r.flush()
-    sceneRef.current?.render()
-  }, [onionSplit])
-
-  // Dev-only: on reveal-complete, dump lossless PNGs of both shading
-  // buffers so the A/B comparison can be inspected outside the preview
-  // harness. Overwrites the same two paths every generation.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    const onComplete = async () => {
-      const pair = await rendererRef.current?.exportShadingPair()
-      if (!pair) return
-      const post = (name: string, dataUrl: string) =>
-        fetch('/__snapshot', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ name, dataUrl }),
-        }).catch(() => { /* dev tool — silent */ })
-      await Promise.all([
-        post('tension-a-result', pair.classic),
-        post('tension-b-result', pair.enhanced),
-      ])
-    }
-    window.addEventListener('tension:reveal-complete', onComplete)
-    return () => window.removeEventListener('tension:reveal-complete', onComplete)
-  }, [])
 
   // Stable refs for animation loop
   const phaseRef = useRef(phase)
@@ -335,169 +213,182 @@ export function CrystalGrowthViewer() {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const scene = new SceneManager(canvas)
-    sceneRef.current = scene
+    const controller = new AbortController()
+    let cleanupScene: (() => void) | null = null
 
-    const crystalRenderer = new CrystalRenderer(scene.scene, MAX_PARTICLES)
-    rendererRef.current = crystalRenderer
-    if (import.meta.env.DEV) crystalRenderer.setOnionSplit(onionSplit)
+    SceneManager.create(canvas, controller.signal).then((scene) => {
+      sceneRef.current = scene
 
-    const sim = new FloodFillSimulation()
-    simRef.current = sim
+      const crystalRenderer = new CrystalRenderer(scene.scene, MAX_PARTICLES)
+      rendererRef.current = crystalRenderer
 
-    // Connect renderer to grid data for incremental boundary detection
-    crystalRenderer.setGridData(sim.getGrid().data)
+      const sim = new FloodFillSimulation()
+      simRef.current = sim
 
-    // Set up the initial profile with seeded PRNGs
-    const masterSeed = decodeSeed(seedStringRef.current)
-    const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
-    const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
-    setActiveProfile(agateProfile, strategyRng, bandRng)
-    setVariantOverride(variant)
+      // Connect renderer to grid data for incremental boundary detection
+      crystalRenderer.setGridData(sim.getGrid().data)
 
-    // Initialize: partition runs async in a worker; kick it off and
-    // move into growing phase. The animate loop will show the loading
-    // orb at seed centres (known synchronously) until the worker
-    // returns and prepareReveal wires the cell set in.
-    setPhase('growing')
-    initSeeds(sim)
+      // Set up the initial profile with seeded PRNGs
+      const masterSeed = decodeSeed(seedStringRef.current)
+      const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
+      const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
+      setActiveProfile(agateProfile, strategyRng, bandRng)
+      setVariantOverride(variant)
 
-    // Resize handler
-    const onResize = () => scene.resize()
-    window.addEventListener('resize', onResize)
+      // Initialize: partition runs async in a worker; kick it off and
+      // move into growing phase. The animate loop will show the loading
+      // orb at seed centres (known synchronously) until the worker
+      // returns and prepareReveal wires the cell set in.
+      setPhase('growing')
+      initSeeds(sim)
 
-    // Pinch-to-zoom enabled — viewport gestures pass through to the browser.
+      // Resize handler
+      const onResize = () => scene.resize()
+      window.addEventListener('resize', onResize, { signal: controller.signal })
 
-    // Animation loop
-    let frameCount = 0
-    let fpsFrameCount = 0
-    let fpsLastTime = 0
-    let smoothedFrameTime = 0
-    const animate = (time: number) => {
-      if (phaseRef.current === 'complete') {
-        rafRef.current = 0
-        return
-      }
-      rafRef.current = requestAnimationFrame(animate)
+      // Pinch-to-zoom enabled, viewport gestures pass through to the browser.
 
-      const dt = lastTimeRef.current ? Math.min(time - lastTimeRef.current, MAX_DELTA) : 16
-      lastTimeRef.current = time
-      frameCount++
-
-      // FPS — exponential moving average, updates every 15 frames
-      fpsFrameCount++
-      if (fpsLastTime > 0) {
-        const frameMs = time - fpsLastTime
-        smoothedFrameTime = smoothedFrameTime === 0
-          ? frameMs
-          : smoothedFrameTime * 0.85 + frameMs * 0.15
-      }
-      fpsLastTime = time
-      if (fpsFrameCount % 15 === 0) {
-        setFps(smoothedFrameTime > 0 ? Math.round(1000 / smoothedFrameTime) : 0)
-      }
-
-      if (phaseRef.current === 'dissolving') {
-        const startAt = dissolvePhaseStartRef.current || time
-        if (!dissolvePhaseStartRef.current) dissolvePhaseStartRef.current = time
-        const elapsed = time - startAt
-        const DURATION = 1000
-        const progress = Math.min(1, elapsed / DURATION)
-        const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
-        // Sparkle count scales with converted-region size.
-        const sparkleCount = 150 + ((progress * 900) | 0)
-        crystalRenderer.drawParticleDissolve(progress, sparkleCount, pulse)
-        if (elapsed >= DURATION) {
-          dissolvePhaseStartRef.current = 0
-          // Preserve the old revealOrder before reset so the growing
-          // phase can cross-fade sparkles from old → new cavity cells.
-          crystalRenderer.capturePreviousRevealOrder()
-          dissolveCompleteCbRef.current?.()
-          dissolveCompleteCbRef.current = null
-          // Composite the first crossfade frame immediately so there's
-          // no pure-black frame between dissolve end and growing start.
-          crystalRenderer.drawCrossfadeSparkles(7000, pulse, 0)
-          // Synchronously switch the phase ref so the NEXT rAF enters
-          // the growing branch. Without this, React's async phase
-          // update lets rAFs re-enter the dissolving branch with
-          // dissolvePhaseStartRef reset to 0, which restarts the
-          // dissolve from progress=0 and re-reveals the old design —
-          // the "stutter of blackness" the user reported was actually
-          // the design flashing back in before the state settled.
-          phaseRef.current = 'growing'
-        }
-        crystalRenderer.flush()
-        scene.render()
-        return
-      }
-
-      if (phaseRef.current === 'growing') {
-        crystalRenderer.precomputeChunk(180_000)
-        const startAt = growPhaseStartRef.current || time
-        if (!growPhaseStartRef.current) growPhaseStartRef.current = time
-        const elapsed = time - startAt
-        const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
-        // Cross-fade sparkles from the previous nodule's cell set to
-        // the new one over the first 500ms. Paint area and shape shift
-        // smoothly while the sparkle primitive stays identical.
-        const CROSSFADE_MS = 500
-        if (crystalRenderer.hasPreviousRevealOrder()) {
-          const w = Math.min(1, elapsed / CROSSFADE_MS)
-          crystalRenderer.drawCrossfadeSparkles(7000, pulse, w)
-          if (w >= 1) crystalRenderer.clearPreviousRevealOrder()
-        } else {
-          crystalRenderer.drawGrowthOrb(7000, 1, pulse)
-        }
-        crystalRenderer.flush()
-        // Advance to revealing once the minimum grow duration has
-        // elapsed AND the colour precompute has caught up.
-        if (elapsed >= 1200 && crystalRenderer.isPrecomputeDone()) {
-          growPhaseStartRef.current = 0
-          setPhase('revealing')
-        }
-        scene.render()
-        return
-      }
-
-      if (phaseRef.current === 'revealing') {
-        const CHUNK = 30_000
-        crystalRenderer.advanceReveal(CHUNK)
-        const remaining = crystalRenderer.revealRemaining()
-        const sparkleCount = Math.min(5000, Math.floor(remaining * 0.004) + 400)
-        const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
-        crystalRenderer.drawSparkle(sparkleCount, pulse)
-        crystalRenderer.flush()
-        if (frameCount % 6 === 0) {
-          setParticleCount(crystalRenderer.getCount())
-        }
-        if (crystalRenderer.revealRemaining() === 0) {
-          // Restore any leftover sparkle cells to their underlying band
-          // colour before the strain pass runs, so no shimmer ghosts
-          // persist into the completed state.
-          crystalRenderer.restoreSparklesFromBase()
-          crystalRenderer.applyBoundaryStrain(sim.getGrid().data)
-          crystalRenderer.flush()
-          setPhase('complete')
-          scene.render()
-          window.dispatchEvent(new CustomEvent('tension:reveal-complete'))
+      // Animation loop
+      let frameCount = 0
+      let fpsFrameCount = 0
+      let fpsLastTime = 0
+      let smoothedFrameTime = 0
+      const animate = (time: number) => {
+        if (phaseRef.current === 'complete') {
+          rafRef.current = 0
           return
         }
-        scene.render()
-        return
+        rafRef.current = requestAnimationFrame(animate)
+
+        const dt = lastTimeRef.current ? Math.min(time - lastTimeRef.current, MAX_DELTA) : 16
+        lastTimeRef.current = time
+        frameCount++
+
+        // FPS: exponential moving average, updates every 15 frames
+        fpsFrameCount++
+        if (fpsLastTime > 0) {
+          const frameMs = time - fpsLastTime
+          smoothedFrameTime = smoothedFrameTime === 0
+            ? frameMs
+            : smoothedFrameTime * 0.85 + frameMs * 0.15
+        }
+        fpsLastTime = time
+        if (fpsFrameCount % 15 === 0) {
+          setFps(smoothedFrameTime > 0 ? Math.round(1000 / smoothedFrameTime) : 0)
+        }
+
+        if (phaseRef.current === 'dissolving') {
+          const startAt = dissolvePhaseStartRef.current || time
+          if (!dissolvePhaseStartRef.current) dissolvePhaseStartRef.current = time
+          const elapsed = time - startAt
+          const DURATION = 1000
+          const progress = Math.min(1, elapsed / DURATION)
+          const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
+          // Sparkle count scales with converted-region size.
+          const sparkleCount = 150 + ((progress * 900) | 0)
+          crystalRenderer.drawParticleDissolve(progress, sparkleCount, pulse)
+          if (elapsed >= DURATION) {
+            dissolvePhaseStartRef.current = 0
+            // Preserve the old revealOrder before reset so the growing
+            // phase can cross-fade sparkles from old to new cavity cells.
+            crystalRenderer.capturePreviousRevealOrder()
+            dissolveCompleteCbRef.current?.()
+            dissolveCompleteCbRef.current = null
+            // Composite the first crossfade frame immediately so there's
+            // no pure-black frame between dissolve end and growing start.
+            crystalRenderer.drawCrossfadeSparkles(7000, pulse, 0)
+            // Synchronously switch the phase ref so the NEXT rAF enters
+            // the growing branch. Without this, React's async phase
+            // update lets rAFs re-enter the dissolving branch with
+            // dissolvePhaseStartRef reset to 0, which restarts the
+            // dissolve from progress=0 and re-reveals the old design:
+            // the "stutter of blackness" the user reported was actually
+            // the design flashing back in before the state settled.
+            phaseRef.current = 'growing'
+          }
+          crystalRenderer.flush()
+          scene.render()
+          return
+        }
+
+        if (phaseRef.current === 'growing') {
+          crystalRenderer.precomputeChunk(180_000)
+          const startAt = growPhaseStartRef.current || time
+          if (!growPhaseStartRef.current) growPhaseStartRef.current = time
+          const elapsed = time - startAt
+          const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
+          // Cross-fade sparkles from the previous nodule's cell set to
+          // the new one over the first 500ms. Paint area and shape shift
+          // smoothly while the sparkle primitive stays identical.
+          const CROSSFADE_MS = 500
+          if (crystalRenderer.hasPreviousRevealOrder()) {
+            const w = Math.min(1, elapsed / CROSSFADE_MS)
+            crystalRenderer.drawCrossfadeSparkles(7000, pulse, w)
+            if (w >= 1) crystalRenderer.clearPreviousRevealOrder()
+          } else {
+            crystalRenderer.drawGrowthOrb(7000, 1, pulse)
+          }
+          crystalRenderer.flush()
+          // Advance to revealing once the minimum grow duration has
+          // elapsed AND the colour precompute has caught up.
+          if (elapsed >= 1200 && crystalRenderer.isPrecomputeDone()) {
+            growPhaseStartRef.current = 0
+            setPhase('revealing')
+          }
+          scene.render()
+          return
+        }
+
+        if (phaseRef.current === 'revealing') {
+          const CHUNK = 30_000
+          crystalRenderer.advanceReveal(CHUNK)
+          const remaining = crystalRenderer.revealRemaining()
+          const sparkleCount = Math.min(5000, Math.floor(remaining * 0.004) + 400)
+          const pulse = 0.5 + 0.5 * Math.sin(time * 0.006)
+          crystalRenderer.drawSparkle(sparkleCount, pulse)
+          crystalRenderer.flush()
+          if (frameCount % 6 === 0) {
+            setParticleCount(crystalRenderer.getCount())
+          }
+          if (crystalRenderer.revealRemaining() === 0) {
+            // Restore any leftover sparkle cells to their underlying band
+            // colour before the strain pass runs, so no shimmer ghosts
+            // persist into the completed state.
+            crystalRenderer.restoreSparklesFromBase()
+            crystalRenderer.applyBoundaryStrain(sim.getGrid().data)
+            crystalRenderer.flush()
+            setPhase('complete')
+            scene.render()
+            window.dispatchEvent(new CustomEvent('tension:reveal-complete'))
+            return
+          }
+          scene.render()
+          return
+        }
+
+        // Silence unused `dt` in active paths.
+        void dt
       }
+      animateRef.current = animate
 
-      // Silence unused `dt` in active paths.
-      void dt
-    }
-    animateRef.current = animate
+      rafRef.current = requestAnimationFrame(animate)
 
-    rafRef.current = requestAnimationFrame(animate)
+      cleanupScene = () => {
+        cancelAnimationFrame(rafRef.current)
+        animateRef.current = null
+        crystalRenderer.dispose()
+        scene.dispose()
+      }
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        console.error('Tension WebGPU initialization failed', error)
+      }
+    })
 
     return () => {
+      controller.abort()
+      cleanupScene?.()
       cancelAnimationFrame(rafRef.current)
-      window.removeEventListener('resize', onResize)
-      crystalRenderer.dispose()
-      scene.dispose()
     }
   }, [initSeeds])
 
@@ -640,14 +531,7 @@ export function CrystalGrowthViewer() {
   // poll for completion without a human in the loop.
   useEffect(() => {
     if (!import.meta.env.DEV) return
-    const w = window as unknown as {
-      __tensionRandomize?: () => void
-      __tensionSetSeed?: (s: string) => void
-      __tensionSeed?: string
-      __tensionLastRevealAt?: number | null
-      __tensionPumpToComplete?: (maxFrames?: number, fps?: number) =>
-        Promise<{ done: boolean; frames?: number; phase?: SimulationPhase }>
-    }
+    const w = window
     w.__tensionRandomize = () => handleRandomize()
     w.__tensionSetSeed = (s: string) => regenerateWithSeed(s)
     w.__tensionSeed = seedStringRef.current
@@ -684,17 +568,27 @@ export function CrystalGrowthViewer() {
       delete w.__tensionSetSeed
       delete w.__tensionSeed
       delete w.__tensionLastRevealAt
+      delete w.__tensionPumpToComplete
     }
   }, [handleRandomize, regenerateWithSeed])
 
   const handleSave = useCallback(() => {
     const canvas = canvasRef.current
-    if (!canvas) return
-    const dataUrl = canvas.toDataURL('image/png')
-    const link = document.createElement('a')
-    link.download = `tension-${seedStringRef.current}-${Date.now()}.png`
-    link.href = dataUrl
-    link.click()
+    const scene = sceneRef.current
+    if (!canvas || !scene) return
+    // WebGPU canvases don't support `preserveDrawingBuffer`, so render an
+    // explicit frame right before capture and read back via `toBlob`
+    // rather than a synchronous `toDataURL` that might race a stale frame.
+    scene.render()
+    canvas.toBlob((blob) => {
+      if (!blob) return
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.download = `tension-${seedStringRef.current}-${Date.now()}.png`
+      link.href = url
+      link.click()
+      URL.revokeObjectURL(url)
+    }, 'image/png')
   }, [])
 
   return (
@@ -722,9 +616,6 @@ export function CrystalGrowthViewer() {
           className="w-full h-full block"
           title={phase === 'complete' ? 'Click the dice to generate a new design.' : undefined}
         />
-        {import.meta.env.DEV && (
-          <OnionSkinHandle value={onionSplit} onChange={setOnionSplit} />
-        )}
       </div>
     </ProjectShell>
   )

@@ -1,19 +1,15 @@
 #!/usr/bin/env bun
 /**
- * Headless A/B renderer for the Tension generative agate.
+ * Headless renderer for the Tension generative agate.
  *
  * Runs the engine (partition → wall-distance → per-cell color) in Bun
- * without a browser, then writes labeled PNGs so shading changes can
- * be diffed iteration-to-iteration against a fixed seed.
+ * without a browser, then writes a labeled PNG so shading changes can be
+ * compared across iterations against a fixed seed.
  *
  * Usage:
  *   bun scripts/tension-render.ts --seed zonal01 --variant zonal --label iter03
  *
- * Outputs (defaults to /tmp/tension-iter/):
- *   <label>-a.png     — classic shading buffer
- *   <label>-b.png     — enhanced shading buffer
- *   <label>-diff.png  — abs(A-B) amplified 4×
- *   <label>-strip.png — stacked center-crop (A / B / diff) for quick Read
+ * Output (defaults to /tmp/tension-iter/<label>.png).
  */
 
 import { parseArgs } from 'node:util'
@@ -30,6 +26,7 @@ import {
   setVariantOverride,
   computeColorWallBased,
   precomputeSeedTilt,
+  VARIANT_PRESETS,
   type VariantPreset,
 } from '~/projects/tension/engine/ColorMapper'
 import { profile as agateProfile } from '~/projects/tension/profiles'
@@ -136,6 +133,17 @@ function buildSeed(masterSeed: number, index: number, x: number, y: number, axis
   }
 }
 
+function isVariantPreset(value: string): value is VariantPreset {
+  return (VARIANT_PRESETS as readonly string[]).includes(value)
+}
+
+function expectDefined<T>(value: T | undefined, label: string): T {
+  if (value === undefined) {
+    throw new Error(`[tension-render] expected ${label} to be defined`)
+  }
+  return value
+}
+
 // ─── Main ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -147,20 +155,18 @@ async function main() {
       outdir:  { type: 'string', default: '/tmp/tension-iter' },
       width:   { type: 'string', default: '1600' },
       height:  { type: 'string', default: '900' },
-      /** Parity mode: run BOTH passes with experimental=false.
-       *  Expected: identical bytes → mean/peak delta 0. Any non-zero
-       *  means the baseline path has picked up a hidden side effect. */
-      parity:  { type: 'boolean', default: false },
       /** Optional native-resolution crop: "X,Y,W,H" in PIXEL space of
-       *  the final (Y-flipped) PNG. When set, emits additional
-       *  <label>-crop-{a,b,diff}.png files at exactly the requested
-       *  size so we can loupe specific regions without downsampling. */
+       *  the final (Y-flipped) PNG. */
       crop:    { type: 'string' },
     },
   })
 
-  const seedString = values.seed!
-  const variant = values.variant as VariantPreset
+  const { seed: seedString, variant: variantArg, label, outdir } = values
+  if (!isVariantPreset(variantArg)) {
+    console.error(`--variant must be one of ${VARIANT_PRESETS.join(', ')}; got "${variantArg}"`)
+    process.exit(1)
+  }
+  const variant: VariantPreset = variantArg
   const W = Number(values.width)
   const H = Number(values.height)
   const masterSeed = decodeSeed(seedString)
@@ -183,19 +189,10 @@ async function main() {
     buildSeed(masterSeed, i, p.x, p.y, sim.axisCount, agateProfile)
   )
 
-  // Dual partition scaffold — A at baseline, B at the current geometry
-  // experiment (if any). Today both sides use the same scale; the next
-  // cavity-shape experiment just overrides partitionScaleB. Each side
-  // keeps its own gridData / wallDist / septum / per-seed max so a
-  // geometry swap doesn't need any loop rewiring.
-  const partitionScaleA = agateProfile.growthNoiseScale * 0.045
-  const partitionScaleB = partitionScaleA // ← next geometry experiment lands here
-  const { gridData: gridA } = partitionCavities(seeds, W, H, partitionScaleA, 0.065)
-  const { gridData: gridB } = partitionCavities(seeds, W, H, partitionScaleB, 0.065)
-  const wallDistA = computeWallDistance(gridA, W, H)
-  const wallDistB = computeWallDistance(gridB, W, H)
-  const septumA = computeInterSeedMask(gridA, W, H, 1)
-  const septumB = computeInterSeedMask(gridB, W, H, 1)
+  const partitionScale = agateProfile.growthNoiseScale * 0.045
+  const { gridData } = partitionCavities(seeds, W, H, partitionScale, 0.065)
+  const wallDist = computeWallDistance(gridData, W, H)
+  const septum = computeInterSeedMask(gridData, W, H, 1)
 
   const buildMaxWallDist = (grid: Uint16Array, wallDist: Uint16Array): Map<number, number> => {
     const m = new Map<number, number>()
@@ -208,8 +205,7 @@ async function main() {
     }
     return m
   }
-  const maxWallDistA = buildMaxWallDist(gridA, wallDistA)
-  const maxWallDistB = buildMaxWallDist(gridB, wallDistB)
+  const maxWallDist = buildMaxWallDist(gridData, wallDist)
 
   const seedsMap = new Map(seeds.map(s => [s.id, s]))
   const tiltCache = new Map(seeds.map(s => [s.id, precomputeSeedTilt(s)]))
@@ -217,54 +213,27 @@ async function main() {
   const SEPTUM = [26, 22, 18]
   const INV_SCALE = 1 // DPR=1
 
-  const rgbaA = new Uint8Array(W * H * 4)
-  const rgbaB = new Uint8Array(W * H * 4)
+  const rgba = new Uint8Array(W * H * 4)
 
-  const experimentalOn = !values.parity
-
-  // A loop — baseline shading, baseline partition.
-  for (let i = 0; i < gridA.length; i++) {
-    const seedId = gridA[i]
+  for (let i = 0; i < gridData.length; i++) {
+    const seedId = gridData[i]
     const off = i * 4
     if (seedId === 0) {
-      rgbaA[off] = 0; rgbaA[off + 1] = 0; rgbaA[off + 2] = 0; rgbaA[off + 3] = 255
+      rgba[off] = 0; rgba[off + 1] = 0; rgba[off + 2] = 0; rgba[off + 3] = 255
       continue
     }
     const cy = (i / W) | 0
     const cx = i - cy * W
-    const seed = seedsMap.get(seedId)!
-    const tilt = tiltCache.get(seedId)!
+    const seed = expectDefined(seedsMap.get(seedId), `seed ${seedId}`)
+    const tilt = expectDefined(tiltCache.get(seedId), `tilt for seed ${seedId}`)
     const dx = (cx - seed.x) * INV_SCALE
     const dy = (cy - seed.y) * INV_SCALE
-    const wallDistCells = (wallDistA[i] / 3) * INV_SCALE
-    const cavityMax = ((maxWallDistA.get(seedId) ?? 0) / 3) * INV_SCALE
+    const wallDistCells = (wallDist[i] / 3) * INV_SCALE
+    const cavityMax = ((maxWallDist.get(seedId) ?? 0) / 3) * INV_SCALE
     const axis0 = seed.axes[0] ?? 0
-    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaA, rgbaA, off, cavityMax, false)
-    if (septumA[i]) {
-      rgbaA[off] = SEPTUM[0]; rgbaA[off + 1] = SEPTUM[1]; rgbaA[off + 2] = SEPTUM[2]; rgbaA[off + 3] = 255
-    }
-  }
-
-  // B loop — experimental shading + experimental partition.
-  for (let i = 0; i < gridB.length; i++) {
-    const seedId = gridB[i]
-    const off = i * 4
-    if (seedId === 0) {
-      rgbaB[off] = 0; rgbaB[off + 1] = 0; rgbaB[off + 2] = 0; rgbaB[off + 3] = 255
-      continue
-    }
-    const cy = (i / W) | 0
-    const cx = i - cy * W
-    const seed = seedsMap.get(seedId)!
-    const tilt = tiltCache.get(seedId)!
-    const dx = (cx - seed.x) * INV_SCALE
-    const dy = (cy - seed.y) * INV_SCALE
-    const wallDistCells = (wallDistB[i] / 3) * INV_SCALE
-    const cavityMax = ((maxWallDistB.get(seedId) ?? 0) / 3) * INV_SCALE
-    const axis0 = seed.axes[0] ?? 0
-    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgbaB, rgbaB, off, cavityMax, experimentalOn)
-    if (septumB[i]) {
-      rgbaB[off] = SEPTUM[0]; rgbaB[off + 1] = SEPTUM[1]; rgbaB[off + 2] = SEPTUM[2]; rgbaB[off + 3] = 255
+    computeColorWallBased(dx, dy, wallDistCells, colorParams, axis0, tilt, seedId, rgba, rgba, off, cavityMax)
+    if (septum[i]) {
+      rgba[off] = SEPTUM[0]; rgba[off + 1] = SEPTUM[1]; rgba[off + 2] = SEPTUM[2]; rgba[off + 3] = 255
     }
   }
 
@@ -276,27 +245,7 @@ async function main() {
     for (let y = 0; y < H; y++) out.set(src.subarray(y * row, y * row + row), (H - 1 - y) * row)
     return out
   }
-  const outA = flipY(rgbaA)
-  const outB = flipY(rgbaB)
-
-  // Diff: amplified abs delta.
-  const diff = new Uint8Array(outA.length)
-  let deltaSum = 0
-  let deltaMax = 0
-  for (let i = 0; i < outA.length; i += 4) {
-    const dR = Math.abs(outA[i] - outB[i])
-    const dG = Math.abs(outA[i + 1] - outB[i + 1])
-    const dB = Math.abs(outA[i + 2] - outB[i + 2])
-    deltaSum += dR + dG + dB
-    const peak = Math.max(dR, dG, dB)
-    if (peak > deltaMax) deltaMax = peak
-    diff[i] = Math.min(255, dR * 4)
-    diff[i + 1] = Math.min(255, dG * 4)
-    diff[i + 2] = Math.min(255, dB * 4)
-    diff[i + 3] = 255
-  }
-  const pixels = W * H
-  const meanDelta = deltaSum / (pixels * 3)
+  const output = flipY(rgba)
 
   /**
    * Extract a native-resolution crop from a source buffer. Buffers are
@@ -311,10 +260,8 @@ async function main() {
     return out
   }
 
-  mkdirSync(values.outdir!, { recursive: true })
-  writeFileSync(join(values.outdir!, `${values.label}-a.png`),    encodePng(W, H, outA))
-  writeFileSync(join(values.outdir!, `${values.label}-b.png`),    encodePng(W, H, outB))
-  writeFileSync(join(values.outdir!, `${values.label}-diff.png`), encodePng(W, H, diff))
+  mkdirSync(outdir, { recursive: true })
+  writeFileSync(join(outdir, `${label}.png`), encodePng(W, H, output))
 
   // Full-coverage tiles at native 1:1 resolution. Vision encoders
   // downsample images above ~1024 px on the long side, which erases
@@ -330,7 +277,7 @@ async function main() {
     const r = tileRows === 1 ? '' : row === 0 ? 'n' : 's'
     return `${r}${c}` || 'full'
   }
-  const emitTiles = (buf: Uint8Array, pass: 'a' | 'b' | 'diff') => {
+  const emitTiles = (buf: Uint8Array) => {
     for (let row = 0; row < tileRows; row++) {
       for (let col = 0; col < tileCols; col++) {
         const sx = col * TILE_W
@@ -340,15 +287,13 @@ async function main() {
         const tile = cropRegion(buf, sx, sy, cw, ch)
         const region = cardinal(col, row)
         writeFileSync(
-          join(values.outdir!, `${values.label}-${region}-${pass}.png`),
+          join(outdir, `${label}-${region}.png`),
           encodePng(cw, ch, tile)
         )
       }
     }
   }
-  emitTiles(outA, 'a')
-  emitTiles(outB, 'b')
-  emitTiles(diff, 'diff')
+  emitTiles(output)
 
   // Optional --crop X,Y,W,H native-resolution loupe crop.
   if (values.crop) {
@@ -364,17 +309,16 @@ async function main() {
       console.error(`--crop region is out of bounds for ${W}x${H} render`)
       process.exit(1)
     }
-    writeFileSync(join(values.outdir!, `${values.label}-crop-a.png`),    encodePng(maxW, maxH, cropRegion(outA, cx, cy, maxW, maxH)))
-    writeFileSync(join(values.outdir!, `${values.label}-crop-b.png`),    encodePng(maxW, maxH, cropRegion(outB, cx, cy, maxW, maxH)))
-    writeFileSync(join(values.outdir!, `${values.label}-crop-diff.png`), encodePng(maxW, maxH, cropRegion(diff, cx, cy, maxW, maxH)))
+    writeFileSync(
+      join(outdir, `${label}-crop.png`),
+      encodePng(maxW, maxH, cropRegion(output, cx, cy, maxW, maxH)),
+    )
   }
 
   const summary = {
     seed: seedString, variant, W, H,
     seeds: seeds.length,
-    meanAbsDelta: Number(meanDelta.toFixed(3)),
-    peakAbsDelta: deltaMax,
-    out: values.outdir!,
+    out: outdir,
   }
   console.log(JSON.stringify(summary, null, 2))
 }

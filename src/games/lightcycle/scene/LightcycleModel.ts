@@ -6,8 +6,11 @@
  * Applies team color to accent materials.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { debug } from '~/utils/debug'
+import { disposeSceneGraph } from '~/utils/three/disposeSceneGraph'
+import { isMesh, isMeshStandardMaterial } from '~/utils/three/typeGuards'
 import {
   JUMP_HEIGHT,
   JUMP_DURATION,
@@ -56,26 +59,26 @@ export class LightcycleModel {
     const loader = new GLTFLoader()
 
     try {
-      console.log('[LightcycleModel] Loading GLB from:', url)
+      debug('[LightcycleModel] Loading GLB from:', url)
       const gltf = await loader.loadAsync(url)
-      console.log('[LightcycleModel] GLB loaded successfully')
+      debug('[LightcycleModel] GLB loaded successfully')
 
       // Store GLB in its own group (keep fallback for toggling)
       this.glbGroup = new THREE.Group()
       const model = gltf.scene
 
       // Log model structure for debugging
-      console.log('[LightcycleModel] Model children:', model.children.length)
+      debug('[LightcycleModel] Model children:', model.children.length)
       model.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material) {
-          console.log('[LightcycleModel] Found mesh:', child.name)
+        if (isMesh(child) && child.material) {
+          debug('[LightcycleModel] Found mesh:', child.name)
           const materials = Array.isArray(child.material)
             ? child.material
             : [child.material]
 
           for (const mat of materials) {
-            console.log('[LightcycleModel] Material:', mat.name, mat.type)
-            if (mat instanceof THREE.MeshStandardMaterial) {
+            debug('[LightcycleModel] Material:', mat.name, mat.type)
+            if (isMeshStandardMaterial(mat)) {
               // Apply accent color to materials with emissive names
               const name = (mat.name || '').toLowerCase()
               const meshName = (child.name || '').toLowerCase()
@@ -84,7 +87,7 @@ export class LightcycleModel {
               )
 
               if (isAccent) {
-                console.log('[LightcycleModel] Applying accent to:', mat.name || child.name)
+                debug('[LightcycleModel] Applying accent to:', mat.name || child.name)
                 mat.emissive = new THREE.Color(this.color)
                 mat.emissiveIntensity = 1.5
                 this.glbAccentMaterials.push(mat)
@@ -125,7 +128,7 @@ export class LightcycleModel {
         this.glbGroup.visible = false
       }
 
-      console.log('[LightcycleModel] Model setup complete')
+      debug('[LightcycleModel] Model setup complete')
     } catch (error) {
       console.warn('[LightcycleModel] Failed to load GLB:', error)
       // Keep fallback geometry
@@ -547,7 +550,10 @@ export class LightcycleModel {
     if (this.explosionGroup) {
       for (const particle of this.explosionParticles) {
         particle.mesh.geometry.dispose()
-        ;(particle.mesh.material as THREE.Material).dispose()
+        const materials = Array.isArray(particle.mesh.material)
+          ? particle.mesh.material
+          : [particle.mesh.material]
+        for (const mat of materials) mat.dispose()
       }
       scene.remove(this.explosionGroup)
       this.explosionGroup = null
@@ -574,16 +580,7 @@ export class LightcycleModel {
   }
 
   dispose(): void {
-    this.group.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose()
-        if (Array.isArray(child.material)) {
-          child.material.forEach((m) => m.dispose())
-        } else {
-          child.material.dispose()
-        }
-      }
-    })
+    disposeSceneGraph(this.group)
     this.accentMaterials = []
     this.fallbackAccentMaterials = []
     this.glbAccentMaterials = []

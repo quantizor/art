@@ -99,6 +99,23 @@ export class AIController {
     this.collisionSystem = collisionSystem
   }
 
+  private getStrategyState(cycleId: string, currentTime: number): AIStrategyState {
+    const existing = this.strategyState.get(cycleId)
+    if (existing) return existing
+
+    const state: AIStrategyState = {
+      activeStrategy: 'survive',
+      targetId: null,
+      strategyStartTime: currentTime,
+      persistenceTicks: 0,
+      lastEvalTime: -Infinity,
+      decisionCount: 0,
+      lastTurnTime: -Infinity,
+    }
+    this.strategyState.set(cycleId, state)
+    return state
+  }
+
   // ──────────────────────────────────────────
   // MAIN DECISION ENTRY POINT
   // ──────────────────────────────────────────
@@ -111,20 +128,7 @@ export class AIController {
     const profile = cycle.aiProfile ?? DEFAULT_PROFILE
     const preferences = AI_STRATEGY_PREFERENCES[profile.personality]
 
-    // Initialize strategy state for this cycle
-    let state = this.strategyState.get(cycle.id)
-    if (!state) {
-      state = {
-        activeStrategy: 'survive',
-        targetId: null,
-        strategyStartTime: currentTime,
-        persistenceTicks: 0,
-        lastEvalTime: -Infinity,
-        decisionCount: 0,
-        lastTurnTime: -Infinity,
-      }
-      this.strategyState.set(cycle.id, state)
-    }
+    const state = this.getStrategyState(cycle.id, currentTime)
 
     // Rate limit
     const effectiveInterval =
@@ -138,7 +142,7 @@ export class AIController {
     // ── STRATEGY SELECTION ────────────────────────
     const targetDead =
       state.targetId !== null &&
-      !allCycles.some((c) => c.id === state!.targetId && c.isAlive)
+      !allCycles.some((c) => c.id === state.targetId && c.isAlive)
     const shouldReconsider =
       state.persistenceTicks >= preferences.maxPersistence ||
       state.persistenceTicks >= preferences.minPersistence ||
@@ -167,7 +171,7 @@ export class AIController {
 
     // ── STRATEGY EXECUTION ────────────────────────
     const target = state.targetId
-      ? allCycles.find((c) => c.id === state!.targetId && c.isAlive)
+      ? allCycles.find((c) => c.id === state.targetId && c.isAlive)
       : undefined
 
     // Difficulty-based mistakes: every Nth decision, fall back to survive
@@ -642,7 +646,7 @@ export class AIController {
   private executeCutOff(
     self: CycleState,
     target: CycleState,
-    allCycles: CycleState[],
+    _allCycles: CycleState[],
     _profile: AIProfile
   ): AIDecision {
     const tVec = DIRECTION_VECTORS[target.direction]
@@ -828,19 +832,17 @@ export class AIController {
     allCycles: CycleState[],
     profile: AIProfile
   ): AIDecision {
-    const scores = this.evaluateAllDirections(self, allCycles, profile)
-    scores.sort((a, b) => b.totalScore - a.totalScore)
-
-    const forwardOption = scores.find((s) => s.turn === 'none')!
+    const { forward, left, right } = this.evaluateAllDirections(self, allCycles, profile)
+    const scores = [forward, left, right].sort((a, b) => b.totalScore - a.totalScore)
     const bestOption = scores[0]
 
     // If forward is within 90% of best, keep going straight (stability)
-    if (forwardOption.totalScore >= bestOption.totalScore * 0.9) {
+    if (forward.totalScore >= bestOption.totalScore * 0.9) {
       // Check for jump opportunity
       const shouldJump = this.shouldJump(
         self,
         allCycles,
-        forwardOption.forwardDistance,
+        forward.forwardDistance,
         profile
       )
       return { turn: 'none', urgency: 0.3, jump: shouldJump }
@@ -962,25 +964,21 @@ export class AIController {
   // SURVIVE SCORING (retained from previous AI)
   // ──────────────────────────────────────────
 
+  /**
+   * Scores the three reachable directions (forward, left, right). Returns
+   * a keyed object rather than an array so callers can reach the forward
+   * option directly instead of an unsound `.find(...)!`.
+   */
   private evaluateAllDirections(
     cycle: CycleState,
     allCycles: CycleState[],
     profile: AIProfile
-  ): DirectionScore[] {
+  ): { forward: DirectionScore; left: DirectionScore; right: DirectionScore } {
     const weights = profile.personalityWeights
     const effectiveLookAhead =
       AI_CONFIG.lookAheadDistance * profile.difficultyParams.lookAheadMultiplier
 
-    const directions: Array<{
-      dir: GridDirection
-      turn: 'left' | 'right' | 'none'
-    }> = [
-      { dir: cycle.direction, turn: 'none' },
-      { dir: TURN_LEFT[cycle.direction], turn: 'left' },
-      { dir: TURN_RIGHT[cycle.direction], turn: 'right' },
-    ]
-
-    return directions.map(({ dir, turn }) => {
+    const scoreDirection = (dir: GridDirection, turn: 'left' | 'right' | 'none'): DirectionScore => {
       const vector = DIRECTION_VECTORS[dir]
 
       const forwardHit = this.collisionSystem.raycast(
@@ -1031,7 +1029,13 @@ export class AIController {
         centerPreference,
         totalScore,
       }
-    })
+    }
+
+    return {
+      forward: scoreDirection(cycle.direction, 'none'),
+      left: scoreDirection(TURN_LEFT[cycle.direction], 'left'),
+      right: scoreDirection(TURN_RIGHT[cycle.direction], 'right'),
+    }
   }
 
   private countEscapePathsRecursive(

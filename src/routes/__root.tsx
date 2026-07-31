@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
 import {
   HeadContent,
-  Outlet,
   Scripts,
   createRootRoute,
 } from '@tanstack/react-router'
@@ -81,7 +80,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="min-h-screen">
-        <Outlet />
+        {children}
         {/* <TanStackRouterDevtools position="bottom-right" /> */}
         <Scripts />
       </body>

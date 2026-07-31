@@ -21,21 +21,20 @@
 import {
   type ComponentPropsWithoutRef,
   type ReactNode,
+  type Ref,
   createContext,
   useContext,
-  forwardRef,
 } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { DiagonalDivider } from './DiagonalDivider';
+import { GroupSeparator } from './GroupSeparator';
 
-// Context for managing toggle state
+// Context for managing toggle state. Discriminated on `type` so
+// ToggleItem can narrow `value` without a cast.
 type ToggleGroupContextValue = {
-  type: 'single' | 'multiple';
-  value: string | string[];
   onValueChange: (value: string) => void;
   size?: 'sm' | 'md' | 'lg';
   variant?: 'default' | 'primary';
-};
+} & ({ type: 'single'; value: string } | { type: 'multiple'; value: string[] });
 
 const ToggleGroupContext = createContext<ToggleGroupContextValue | null>(null);
 
@@ -68,28 +67,9 @@ const toggleGroupVariants = cva(
   }
 );
 
-export interface ToggleGroupProps
+interface ToggleGroupBaseProps
   extends Omit<ComponentPropsWithoutRef<'div'>, 'onChange'>,
     VariantProps<typeof toggleGroupVariants> {
-  /**
-   * Type of toggle group
-   * - "single": Only one item can be active (radio-like)
-   * - "multiple": Multiple items can be active (checkbox-like)
-   */
-  type: 'single' | 'multiple';
-
-  /**
-   * Current value(s)
-   * - string for single type
-   * - string[] for multiple type
-   */
-  value: string | string[];
-
-  /**
-   * Callback when value changes
-   */
-  onValueChange: (value: string | string[]) => void;
-
   /**
    * Size of toggle items
    */
@@ -101,60 +81,80 @@ export interface ToggleGroupProps
   variant?: 'default' | 'primary';
 
   children: ReactNode;
+
+  ref?: Ref<HTMLDivElement>;
 }
 
-const ToggleGroup = forwardRef<HTMLDivElement, ToggleGroupProps>(
+/**
+ * Discriminated on `type` so `value` and `onValueChange` narrow together:
+ * "single" pairs a `string` value with a single-value callback, "multiple"
+ * pairs a `string[]` value with an array callback.
+ */
+export type ToggleGroupProps = ToggleGroupBaseProps &
   (
-    {
-      type,
-      value,
-      onValueChange,
-      size = 'md',
-      variant = 'default',
-      orientation,
-      className,
-      children,
-      ...props
-    },
-    ref
-  ) => {
-    const handleItemClick = (itemValue: string) => {
-      if (type === 'single') {
-        onValueChange(itemValue);
-      } else {
-        const currentValues = value as string[];
-        const newValues = currentValues.includes(itemValue)
-          ? currentValues.filter((v) => v !== itemValue)
-          : [...currentValues, itemValue];
-        onValueChange(newValues);
+    | {
+        /** Only one item can be active (radio-like) */
+        type: 'single';
+        value: string;
+        onValueChange: (value: string) => void;
       }
-    };
+    | {
+        /** Multiple items can be active (checkbox-like) */
+        type: 'multiple';
+        value: string[];
+        onValueChange: (value: string[]) => void;
+      }
+  );
 
-    return (
-      <ToggleGroupContext.Provider
-        value={{
-          type,
-          value,
-          onValueChange: handleItemClick,
-          size,
-          variant,
-        }}
+function ToggleGroup(props: ToggleGroupProps) {
+  // `value` and `onValueChange` are pulled out only so they don't leak
+  // into `domProps` (a <div> can't accept them); the narrowing-sensitive
+  // logic below reads them back off `props` to keep type and value linked.
+  const {
+    type,
+    value: _value,
+    onValueChange: _onValueChange,
+    size = 'md',
+    variant = 'default',
+    orientation,
+    className,
+    children,
+    ref,
+    ...domProps
+  } = props;
+
+  const handleItemClick = (itemValue: string) => {
+    if (props.type === 'single') {
+      props.onValueChange(itemValue);
+    } else {
+      const newValues = props.value.includes(itemValue)
+        ? props.value.filter((v) => v !== itemValue)
+        : [...props.value, itemValue];
+      props.onValueChange(newValues);
+    }
+  };
+
+  const contextValue: ToggleGroupContextValue =
+    props.type === 'single'
+      ? { type: 'single', value: props.value, onValueChange: handleItemClick, size, variant }
+      : { type: 'multiple', value: props.value, onValueChange: handleItemClick, size, variant };
+
+  return (
+    <ToggleGroupContext.Provider value={contextValue}>
+      <div
+        ref={ref}
+        role={type === 'single' ? 'radiogroup' : 'group'}
+        className={toggleGroupVariants({
+          orientation,
+          className,
+        })}
+        {...domProps}
       >
-        <div
-          ref={ref}
-          role={type === 'single' ? 'radiogroup' : 'group'}
-          className={toggleGroupVariants({
-            orientation,
-            className,
-          })}
-          {...props}
-        >
-          {children}
-        </div>
-      </ToggleGroupContext.Provider>
-    );
-  }
-);
+        {children}
+      </div>
+    </ToggleGroupContext.Provider>
+  );
+}
 ToggleGroup.displayName = 'ToggleGroup';
 
 // Toggle Item Component
@@ -237,17 +237,18 @@ export interface ToggleItemProps extends ComponentPropsWithoutRef<'button'> {
 }
 
 function ToggleItem({ value, children, className, ...props }: ToggleItemProps) {
-  const { type, value: groupValue, onValueChange, size, variant } = useToggleGroup();
+  const context = useToggleGroup();
+  const { size, variant } = context;
 
   const isActive =
-    type === 'single'
-      ? groupValue === value
-      : (groupValue as string[]).includes(value);
+    context.type === 'single'
+      ? context.value === value
+      : context.value.includes(value);
 
   return (
     <button
       type="button"
-      role={type === 'single' ? 'radio' : 'checkbox'}
+      role={context.type === 'single' ? 'radio' : 'checkbox'}
       aria-checked={isActive}
       data-state={isActive ? 'on' : 'off'}
       className={toggleItemVariants({
@@ -256,7 +257,7 @@ function ToggleItem({ value, children, className, ...props }: ToggleItemProps) {
         active: isActive,
         className,
       })}
-      onClick={() => onValueChange(value)}
+      onClick={() => context.onValueChange(value)}
       {...props}
     >
       {children}
@@ -267,34 +268,16 @@ function ToggleItem({ value, children, className, ...props }: ToggleItemProps) {
 // Separator Component (wrapper for DiagonalDivider with proper height)
 function ToggleSeparator() {
   const { size } = useToggleGroup();
-
-  const heightMap = {
-    sm: '2rem',    // h-8
-    md: '2.5rem',  // h-10
-    lg: '3rem',    // h-12
-  };
-
-  return (
-    <DiagonalDivider
-      color="default"
-      variant="default"
-      height={heightMap[size || 'md']}
-    />
-  );
+  return <GroupSeparator size={size} />;
 }
 
-// Compound component type
-type ToggleGroupComponent = typeof ToggleGroup & {
-  Item: typeof ToggleItem;
-  Separator: typeof ToggleSeparator;
-};
+// Compound component: infer the merged type from the assignment itself,
+// no cast needed.
+const ToggleGroupWithSubs = Object.assign(ToggleGroup, {
+  Item: ToggleItem,
+  Separator: ToggleSeparator,
+});
 
-// Attach subcomponents
-(ToggleGroup as ToggleGroupComponent).Item = ToggleItem;
-(ToggleGroup as ToggleGroupComponent).Separator = ToggleSeparator;
-
-// Export compound component
-const ToggleGroupWithSubs = ToggleGroup as ToggleGroupComponent;
 export { ToggleGroupWithSubs as ToggleGroup, ToggleItem, ToggleSeparator };
 
 // Export variants

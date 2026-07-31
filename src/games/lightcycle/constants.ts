@@ -59,6 +59,14 @@ export const TRAIL_FADE_DURATION = 2000
 /** Ground-level Y for trail bottom when not jumping */
 export const TRAIL_BASE_Y = 0
 
+/**
+ * Fixed control-point capacity for each racer's trail mesh. At `BASE_SPEED`
+ * a trail needs roughly `(TRAIL_LIFETIME + TRAIL_FADE_DURATION) / 1000 *
+ * BASE_SPEED / POINT_SPACING` ≈ 63 points; this leaves generous headroom
+ * for jumps, turns, and speed boosts without ever reallocating the mesh.
+ */
+export const MAX_TRAIL_POINTS = 400
+
 // ============================================
 // COLORS (TRON-style palette)
 // ============================================

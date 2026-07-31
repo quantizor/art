@@ -1,7 +1,7 @@
 import { createFileRoute, Link as RouterLink } from '@tanstack/react-router'
 import { SpeedDial } from '~/components/SpeedDial'
 import { getSortedProjects } from '~/data/projects'
-import { Link } from '~/ui'
+import { Link, linkVariants } from '~/ui'
 
 export const Route = createFileRoute('/')({
   component: Home,
@@ -18,8 +18,11 @@ function Home() {
           quantizor's studio
         </h1>
         <nav className="flex gap-4">
-          <RouterLink to="/ui">
-            <Link as="span">Design System</Link>
+          <RouterLink
+            to="/ui"
+            className={linkVariants({ underline: 'hover' })}
+          >
+            Design System
           </RouterLink>
           <Link href="https://quantizor.dev" external>
             quantizor.dev

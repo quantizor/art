@@ -5,30 +5,29 @@
  * and orbit controls for a photorealistic still-life setup.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
+import { createGpuRenderer } from '~/utils/gpu'
+import { disposeSceneGraph } from '~/utils/three/disposeSceneGraph'
+import { parseCameraState, serializeCameraState } from './cameraState'
+import type { CameraState } from './cameraState'
 
 const FOV = 40
 const NEAR = 0.1
 const FAR = 50
 const STORAGE_KEY = 'id1:camera'
 
-interface CameraState {
-  px: number; py: number; pz: number
-  tx: number; ty: number; tz: number
-}
-
 export class SceneManager {
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
-  renderer: THREE.WebGLRenderer
+  renderer: THREE.WebGPURenderer
   controls: OrbitControls
 
   private canvas: HTMLCanvasElement
   private saveTimeout: ReturnType<typeof setTimeout> | null = null
 
-  constructor(canvas: HTMLCanvasElement) {
+  private constructor(canvas: HTMLCanvasElement, renderer: THREE.WebGPURenderer) {
     this.canvas = canvas
     const width = canvas.clientWidth
     const height = canvas.clientHeight
@@ -47,17 +46,15 @@ export class SceneManager {
     this.camera.position.set(1.09, 0.49, 0.31)
 
     // Renderer — cinematic tone mapping, soft shadows
-    this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      powerPreference: 'high-performance',
-    })
-    this.renderer.setSize(width, height)
+    this.renderer = renderer
+    // `updateStyle: false` keeps CSS (`w-full h-full`) in charge of the canvas box.
+    // A renderer-written inline style would make `resize()` read back its own value.
+    this.renderer.setSize(width, height, false)
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
 
     // Orbit controls — constrained for still-life viewing
     this.controls = new OrbitControls(this.camera, canvas)
@@ -78,6 +75,19 @@ export class SceneManager {
     this.controls.addEventListener('change', () => this.debouncedSave())
   }
 
+  /** Create a WebGPU scene, aborting initialization when its mount is torn down. */
+  static async create(
+    canvas: HTMLCanvasElement,
+    signal: AbortSignal,
+  ): Promise<SceneManager> {
+    const { renderer } = await createGpuRenderer(canvas, {
+      antialias: true,
+      powerPreference: 'high-performance',
+      signal,
+    })
+    return new SceneManager(canvas, renderer)
+  }
+
   /** Get current camera state for HUD display */
   getCameraInfo(): { x: string; y: string; z: string; azimuth: string; polar: string; dist: string } {
     const p = this.camera.position
@@ -95,15 +105,18 @@ export class SceneManager {
   }
 
   private restoreCamera(): void {
+    let raw: string | null
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (!raw) return
-      const s: CameraState = JSON.parse(raw)
-      this.camera.position.set(s.px, s.py, s.pz)
-      this.controls.target.set(s.tx, s.ty, s.tz)
+      raw = localStorage.getItem(STORAGE_KEY)
     } catch {
-      // Invalid data — use defaults
+      return
     }
+
+    const state = parseCameraState(raw)
+    if (!state) return
+
+    this.camera.position.set(state.px, state.py, state.pz)
+    this.controls.target.set(state.tx, state.ty, state.tz)
   }
 
   private debouncedSave(): void {
@@ -118,7 +131,13 @@ export class SceneManager {
       px: p.x, py: p.y, pz: p.z,
       tx: t.x, ty: t.y, tz: t.z,
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    const serialized = serializeCameraState(state)
+    if (!serialized) return
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized)
+    } catch {
+      // Camera persistence is optional; rendering must survive blocked storage.
+    }
   }
 
   /** Load HDRI for environment reflections only (not background) */
@@ -144,7 +163,7 @@ export class SceneManager {
 
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
-    this.renderer.setSize(width, height)
+    this.renderer.setSize(width, height, false)
   }
 
   render(): void {
@@ -162,24 +181,7 @@ export class SceneManager {
       this.scene.environment.dispose()
     }
 
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        object.geometry.dispose()
-        const materials = Array.isArray(object.material)
-          ? object.material
-          : [object.material]
-        for (const mat of materials) {
-          // Dispose all texture maps on the material
-          for (const value of Object.values(mat)) {
-            if (value instanceof THREE.Texture) {
-              value.dispose()
-            }
-          }
-          mat.dispose()
-        }
-      }
-    })
-
+    disposeSceneGraph(this.scene)
     this.scene.clear()
   }
 }

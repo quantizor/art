@@ -21,7 +21,7 @@ import {
   useContext,
 } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { DiagonalDivider } from './DiagonalDivider';
+import { GroupSeparator } from './GroupSeparator';
 
 // Context for button group
 type ButtonGroupContextValue = {
@@ -104,20 +104,7 @@ export function ButtonGroup({
 // Separator Component
 export function ButtonGroupSeparator() {
   const { size } = useButtonGroup();
-
-  const heightMap = {
-    sm: '2rem',    // h-8
-    md: '2.5rem',  // h-10
-    lg: '3rem',    // h-12
-  };
-
-  return (
-    <DiagonalDivider
-      color="default"
-      variant="default"
-      height={heightMap[size || 'md']}
-    />
-  );
+  return <GroupSeparator size={size} />;
 }
 
 // Export compound component

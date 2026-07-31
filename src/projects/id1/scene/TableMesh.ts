@@ -5,7 +5,7 @@
  * albedo, normal, roughness, and displacement maps.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 
 const TEXTURE_BASE = '/textures/rosewood/rosewood_veneer1'
 

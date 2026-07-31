@@ -5,6 +5,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
+import { BASE_SPEED } from '../constants'
 import { GridSystem } from './GridSystem'
 
 describe('GridSystem', () => {
@@ -75,12 +76,12 @@ describe('GridSystem', () => {
   describe('calculateMovement', () => {
     test('calculates movement for 1 second at normal speed', () => {
       const movement = gridSystem.calculateMovement(1000, 1)
-      expect(movement).toBe(12) // BASE_SPEED = 12
+      expect(movement).toBe(BASE_SPEED * 1 * (1000 / 1000))
     })
 
     test('calculates movement for 0.5 seconds at double speed', () => {
       const movement = gridSystem.calculateMovement(500, 2)
-      expect(movement).toBe(12) // 0.5s * 2x speed * 12 = 12
+      expect(movement).toBe(BASE_SPEED * 2 * (500 / 1000))
     })
   })
 

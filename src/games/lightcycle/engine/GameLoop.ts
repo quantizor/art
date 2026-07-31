@@ -70,8 +70,9 @@ export class GameLoop {
 
   private canvas: HTMLCanvasElement
 
-  constructor(
+  private constructor(
     canvas: HTMLCanvasElement,
+    sceneManager: SceneManager,
     dispatch: Dispatch<GameAction>,
     getState: () => GameState
   ) {
@@ -80,7 +81,7 @@ export class GameLoop {
     this.canvas = canvas
 
     // Initialize systems
-    this.sceneManager = new SceneManager(canvas)
+    this.sceneManager = sceneManager
     this.cameraController = new CameraController(this.sceneManager.camera)
     this.arenaRenderer = new ArenaRenderer()
     this.gridSystem = new GridSystem()
@@ -103,6 +104,17 @@ export class GameLoop {
 
     // Handle resize
     window.addEventListener('resize', this.handleResize)
+  }
+
+  /** Create the game loop, aborting WebGPU initialization on mount teardown. */
+  static async create(
+    canvas: HTMLCanvasElement,
+    dispatch: Dispatch<GameAction>,
+    getState: () => GameState,
+    signal: AbortSignal,
+  ): Promise<GameLoop> {
+    const sceneManager = await SceneManager.create(canvas, signal)
+    return new GameLoop(canvas, sceneManager, dispatch, getState)
   }
 
   private handleContextMenu = (e: Event): void => {

@@ -4,8 +4,9 @@
  * Creates the TRON-style arena with grid floor and boundary walls.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 import { ARENA_COLORS, ARENA_SIZE, ARENA_HALF, WALL_HEIGHT, CELL_SIZE } from '../constants'
+import { disposeSceneGraph } from '~/utils/three/disposeSceneGraph'
 
 export class ArenaRenderer {
   group: THREE.Group
@@ -170,23 +171,6 @@ export class ArenaRenderer {
   }
 
   dispose(): void {
-    this.group.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        object.geometry.dispose()
-        if (Array.isArray(object.material)) {
-          object.material.forEach((mat) => mat.dispose())
-        } else {
-          object.material.dispose()
-        }
-      }
-      if (object instanceof THREE.LineSegments) {
-        object.geometry.dispose()
-        if (Array.isArray(object.material)) {
-          object.material.forEach((mat) => mat.dispose())
-        } else {
-          object.material.dispose()
-        }
-      }
-    })
+    disposeSceneGraph(this.group)
   }
 }

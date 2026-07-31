@@ -1,0 +1,21 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/router.tsx",
+    "src/routes/**/*.{ts,tsx}",
+    "src/routeTree.gen.ts",
+    "vite.config.ts",
+    "scripts/**/*.{ts,sh}"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts", "vite.config.ts"],
+  "ignore": [
+    "docs/**",
+    ".output/**",
+    ".tanstack/**",
+    "coverage/**",
+    "src/routeTree.gen.ts"
+  ],
+  "ignoreDependencies": [
+    "nitro"
+  ]
+}

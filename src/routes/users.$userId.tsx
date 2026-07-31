@@ -1,27 +1,35 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, notFound } from '@tanstack/react-router'
 import { NotFound } from 'src/components/NotFound'
 import { UserErrorComponent } from 'src/components/UserError'
-import type { User } from '../utils/users'
+import { parseUser } from '../utils/users'
 
 export const Route = createFileRoute('/users/$userId')({
   loader: async ({ params: { userId } }) => {
+    let res: Response
     try {
-      const res = await fetch('/api/users/' + userId)
-      if (!res.ok) {
-        throw new Error('Unexpected status code')
-      }
+      res = await fetch('/api/users/' + userId)
+    } catch (cause) {
+      throw new Error('Failed to reach the users API', { cause })
+    }
 
-      const data = await res.json()
+    if (res.status === 404) {
+      throw notFound()
+    }
 
-      return data as User
-    } catch {
-      throw new Error('Failed to fetch user')
+    if (!res.ok) {
+      throw new Error(`Unexpected status code ${res.status}`)
+    }
+
+    try {
+      return parseUser(await res.json())
+    } catch (cause) {
+      throw new Error('Received malformed user data', { cause })
     }
   },
   errorComponent: UserErrorComponent,
   component: UserComponent,
   notFoundComponent: () => {
-    return <NotFound>User not found</NotFound>
+    return <NotFound />
   },
 })
 

@@ -51,8 +51,28 @@ function snapshotPlugin(): PluginOption {
 }
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      treeshake: {
+        manualPureFunctions: ['debug'],
+      },
+    },
+  },
   server: {
-    port: 3000,
+    port: 3010,
+  },
+  resolve: {
+    // Addons (OrbitControls, RGBELoader, GLTFLoader, ...) import bare
+    // 'three'. App code is banned from doing the same (see policy-check.ts),
+    // so this alias exists solely to make addon-internal imports resolve to
+    // the WebGPU build instead of pulling in a second, WebGL-only copy of
+    // three's core classes.
+    alias: {
+      // Trailing `$` forces an exact match; without it, this would also
+      // rewrite 'three/addons/...' and 'three/tsl' subpath imports.
+      three$: 'three/webgpu',
+    },
+    dedupe: ['three'],
   },
   plugins: [
     typegpuPlugin({}),

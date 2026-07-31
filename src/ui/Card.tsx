@@ -21,7 +21,7 @@
 import {
   type ComponentPropsWithoutRef,
   type ReactNode,
-  forwardRef,
+  type Ref,
 } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
@@ -87,27 +87,27 @@ export interface CardProps
    * If true, card will have hover effects and cursor pointer
    */
   interactive?: boolean;
+
+  ref?: Ref<HTMLDivElement>;
 }
 
-const Card = forwardRef<HTMLDivElement, CardProps>(
-  ({ interactive, notch, className, children, ...props }, ref) => {
-    return (
-      <div
-        ref={ref}
-        className={cardFrameVariants({
-          interactive,
-          notch,
-          className,
-        })}
-        {...props}
-      >
-        <div className={cardVariants({ notch })}>
-          {children}
-        </div>
+function Card({ interactive, notch, className, children, ref, ...props }: CardProps) {
+  return (
+    <div
+      ref={ref}
+      className={cardFrameVariants({
+        interactive,
+        notch,
+        className,
+      })}
+      {...props}
+    >
+      <div className={cardVariants({ notch })}>
+        {children}
       </div>
-    );
-  }
-);
+    </div>
+  );
+}
 Card.displayName = 'Card';
 
 // Thumbnail Component
@@ -204,24 +204,16 @@ function CardFooter({ className, children, ...props }: CardFooterProps) {
   );
 }
 
-// Compound component type
-type CardComponent = typeof Card & {
-  Thumbnail: typeof CardThumbnail;
-  Content: typeof CardContent;
-  Title: typeof CardTitle;
-  Meta: typeof CardMeta;
-  Footer: typeof CardFooter;
-};
+// Compound component: infer the merged type from the assignment itself,
+// no cast needed.
+const CardWithSubs = Object.assign(Card, {
+  Thumbnail: CardThumbnail,
+  Content: CardContent,
+  Title: CardTitle,
+  Meta: CardMeta,
+  Footer: CardFooter,
+});
 
-// Attach subcomponents
-(Card as CardComponent).Thumbnail = CardThumbnail;
-(Card as CardComponent).Content = CardContent;
-(Card as CardComponent).Title = CardTitle;
-(Card as CardComponent).Meta = CardMeta;
-(Card as CardComponent).Footer = CardFooter;
-
-// Export compound component
-const CardWithSubs = Card as CardComponent;
 export { CardWithSubs as Card, CardThumbnail, CardContent, CardTitle, CardMeta, CardFooter };
 
 // Export variants

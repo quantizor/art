@@ -103,9 +103,9 @@ export function BadgeExamples() {
       <section>
         <h2 className="text-brutal text-xl mb-4">Badge Styles</h2>
         <div className="flex flex-wrap gap-3">
-          <Badge borderWidth="none">No Border</Badge>
-          <Badge borderWidth="thin">Thin Border</Badge>
-          <Badge borderWidth="default">Default Border</Badge>
+          <Badge variant="ghost">Ghost</Badge>
+          <Badge variant="outline">Outline</Badge>
+          <Badge variant="default">Default</Badge>
         </div>
       </section>
     </div>
@@ -127,15 +127,15 @@ export function CardExamples() {
         </Card.Content>
       </Card>
 
-      {/* Interactive Card with Thumbnail */}
-      <Card interactive onClick={() => console.log('Card clicked')}>
+      {/* Interactive hover state with thumbnail */}
+      <Card interactive>
         <Card.Thumbnail
           src="/api/placeholder/400/300"
           alt="Art piece"
           aspectRatio="16/9"
         />
         <Card.Content>
-          <Card.Title>Interactive Project</Card.Title>
+          <Card.Title>Project Hover State</Card.Title>
           <Card.Meta>2024 • Digital Art • Featured</Card.Meta>
         </Card.Content>
       </Card>
@@ -189,14 +189,11 @@ export function ToggleGroupExamples() {
   const [view, setView] = useState('grid');
   const [filters, setFilters] = useState<string[]>(['featured']);
 
-  const handleViewChange = (v: string | string[]) => setView(v as string);
-  const handleFiltersChange = (v: string | string[]) => setFilters(v as string[]);
-
   return (
     <div className="flex flex-col gap-8 p-8 surface-base">
       <section>
         <h2 className="text-brutal text-xl mb-4">Single Select (Radio)</h2>
-        <ToggleGroup type="single" value={view} onValueChange={handleViewChange}>
+        <ToggleGroup type="single" value={view} onValueChange={setView}>
           <ToggleGroup.Item value="grid">Grid</ToggleGroup.Item>
           <ToggleGroup.Item value="list">List</ToggleGroup.Item>
           <ToggleGroup.Item value="masonry">Masonry</ToggleGroup.Item>
@@ -211,7 +208,7 @@ export function ToggleGroupExamples() {
         <ToggleGroup
           type="multiple"
           value={filters}
-          onValueChange={handleFiltersChange}
+          onValueChange={setFilters}
         >
           <ToggleGroup.Item value="featured">Featured</ToggleGroup.Item>
           <ToggleGroup.Item value="recent">Recent</ToggleGroup.Item>
@@ -227,7 +224,7 @@ export function ToggleGroupExamples() {
         <ToggleGroup
           type="single"
           value={view}
-          onValueChange={handleViewChange}
+          onValueChange={setView}
           variant="primary"
         >
           <ToggleGroup.Item value="all">All</ToggleGroup.Item>
@@ -239,17 +236,17 @@ export function ToggleGroupExamples() {
       <section>
         <h2 className="text-brutal text-xl mb-4">Sizes</h2>
         <div className="flex flex-col gap-3">
-          <ToggleGroup type="single" value={view} onValueChange={handleViewChange} size="sm">
+          <ToggleGroup type="single" value={view} onValueChange={setView} size="sm">
             <ToggleGroup.Item value="sm1">Small</ToggleGroup.Item>
               <ToggleGroup.Item value="sm2">Size</ToggleGroup.Item>
           </ToggleGroup>
 
-          <ToggleGroup type="single" value={view} onValueChange={handleViewChange} size="md">
+          <ToggleGroup type="single" value={view} onValueChange={setView} size="md">
             <ToggleGroup.Item value="md1">Medium</ToggleGroup.Item>
               <ToggleGroup.Item value="md2">Size</ToggleGroup.Item>
           </ToggleGroup>
 
-          <ToggleGroup type="single" value={view} onValueChange={handleViewChange} size="lg">
+          <ToggleGroup type="single" value={view} onValueChange={setView} size="lg">
             <ToggleGroup.Item value="lg1">Large</ToggleGroup.Item>
               <ToggleGroup.Item value="lg2">Size</ToggleGroup.Item>
           </ToggleGroup>
@@ -407,7 +404,7 @@ export function SpeedDialExample() {
           <ToggleGroup
             type="multiple"
             value={filter}
-            onValueChange={(v) => setFilter(v as string[])}
+            onValueChange={setFilter}
             variant="primary"
           >
             <ToggleGroup.Item value="all">All</ToggleGroup.Item>
@@ -415,7 +412,7 @@ export function SpeedDialExample() {
               <ToggleGroup.Item value="active">Active</ToggleGroup.Item>
           </ToggleGroup>
 
-          <ToggleGroup type="single" value={view} onValueChange={(v) => setView(v as string)} size="sm">
+          <ToggleGroup type="single" value={view} onValueChange={setView} size="sm">
             <ToggleGroup.Item value="grid">Grid</ToggleGroup.Item>
               <ToggleGroup.Item value="list">List</ToggleGroup.Item>
           </ToggleGroup>

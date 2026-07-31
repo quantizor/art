@@ -1,29 +1,28 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { getRequestHeaders } from '@tanstack/react-start/server'
 import { createMiddleware } from '@tanstack/react-start'
-import type { User } from '~/utils/users'
+import { debug } from '~/utils/debug'
+import { parseUsers } from '~/utils/users'
 
 const userLoggerMiddleware = createMiddleware().server(async ({ next }) => {
-  console.info('In: /users')
-  console.info('Request Headers:', getRequestHeaders())
+  debug('In: /users')
   const result = await next()
   result.response.headers.set('x-users', 'true')
-  console.info('Out: /users')
+  debug('Out: /users')
   return result
 })
 
 const testParentMiddleware = createMiddleware().server(async ({ next }) => {
-  console.info('In: testParentMiddleware')
+  debug('In: testParentMiddleware')
   const result = await next()
   result.response.headers.set('x-test-parent', 'true')
-  console.info('Out: testParentMiddleware')
+  debug('Out: testParentMiddleware')
   return result
 })
 
 const testMiddleware = createMiddleware()
   .middleware([testParentMiddleware])
   .server(async ({ next }) => {
-    console.info('In: testMiddleware')
+    debug('In: testMiddleware')
     const result = await next()
     result.response.headers.set('x-test', 'true')
 
@@ -34,7 +33,7 @@ const testMiddleware = createMiddleware()
     //   })
     // }
 
-    console.info('Out: testMiddleware')
+    debug('Out: testMiddleware')
     return result
   })
 
@@ -43,20 +42,25 @@ export const Route = createFileRoute('/api/users')({
     middleware: [testMiddleware, userLoggerMiddleware],
     handlers: {
       GET: async ({ request }) => {
-        console.info('GET /api/users @', request.url)
-        console.info('Fetching users... @', request.url)
+        debug('GET /api/users @', request.url)
         const res = await fetch('https://jsonplaceholder.typicode.com/users')
         if (!res.ok) {
           throw new Error('Failed to fetch users')
         }
 
-        const data = (await res.json()) as Array<User>
+        let users
+        try {
+          const raw: unknown = await res.json()
+          users = parseUsers(Array.isArray(raw) ? raw.slice(0, 10) : raw)
+        } catch (cause) {
+          console.error('Upstream returned malformed users data', cause)
+          return Response.json(
+            { error: 'Upstream returned invalid data' },
+            { status: 502 },
+          )
+        }
 
-        const list = data.slice(0, 10)
-
-        return Response.json(
-          list.map((u) => ({ id: u.id, name: u.name, email: u.email })),
-        )
+        return Response.json(users)
       },
     },
   },

@@ -5,7 +5,7 @@
  * Handles smooth interpolation between positions.
  */
 
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 import { CAMERA_CONFIG, DIRECTION_TO_ANGLE } from '../constants'
 import type { CameraMode, GridDirection } from '../types'
 

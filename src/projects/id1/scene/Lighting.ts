@@ -5,16 +5,24 @@
  * one subtle rect area fill from the left. No ambient.
  */
 
-import * as THREE from 'three'
-import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js'
+import * as THREE from 'three/webgpu'
+import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js'
 
 export interface SceneLights {
   keyLight: THREE.SpotLight
   fillLight: THREE.RectAreaLight
 }
 
+let ltcInitialized = false
+
+function ensureRectAreaLightLtc(): void {
+  if (ltcInitialized) return
+  ltcInitialized = true
+  THREE.RectAreaLightNode.setLTC(RectAreaLightTexturesLib.init())
+}
+
 export function createLighting(scene: THREE.Scene): SceneLights {
-  RectAreaLightUniformsLib.init()
+  ensureRectAreaLightLtc()
 
   // Key light — warm spot from above-right
   const keyLight = new THREE.SpotLight(

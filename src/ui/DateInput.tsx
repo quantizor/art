@@ -10,7 +10,7 @@
  * <DateInput type="datetime-local" label="Event Time" />
  */
 
-import { forwardRef, useState, type ComponentPropsWithoutRef } from 'react';
+import { forwardRef, type ComponentPropsWithoutRef } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 const dateInputVariants = cva(
