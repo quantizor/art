@@ -59,7 +59,10 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3010,
+    // 3010 collides with another local project's dev server. strictPort makes
+    // a future collision fail loudly instead of silently landing on 3012.
+    port: 3011,
+    strictPort: true,
   },
   resolve: {
     // Addons (OrbitControls, RGBELoader, GLTFLoader, ...) import bare
