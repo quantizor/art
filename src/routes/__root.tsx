@@ -4,7 +4,9 @@ import {
   Scripts,
   createRootRoute,
 } from '@tanstack/react-router'
-// Router devtools disabled — re-enable with:
+// Router devtools are off by default. To turn them on, uncomment this import
+// and the <TanStackRouterDevtools /> element in the body below. The package
+// stays installed for that reason, so knip.json exempts it.
 // import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import * as React from 'react'
 import { DefaultCatchBoundary } from '~/components/DefaultCatchBoundary'

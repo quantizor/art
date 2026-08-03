@@ -9,7 +9,7 @@ How this design system is wired into the app. Paths and tooling match the repo a
 Installed via Bun:
 
 ```bash
-bun add class-variance-authority tailwind-merge
+bun add class-variance-authority
 ```
 
 ### 2. Theme CSS
@@ -93,4 +93,4 @@ When `src/ui/` APIs or tokens change, update `src/routes/ui.tsx` and this folder
 
 - Wrong import path: use `~/ui`, not `@/ui`.
 - Missing styles: confirm `app.css` imports `theme.css` and `@tailwindcss/vite` is in `vite.config.ts`.
-- Class conflicts: compose with `tailwind-merge` / CVA the way existing components do. See `TAILWIND-PATTERNS.md`.
+- Class conflicts: compose with CVA variants the way existing components do, rather than concatenating conflicting utilities. See `TAILWIND-PATTERNS.md`.

@@ -168,6 +168,11 @@ export function CrystalGrowthViewer() {
   simParamsRef.current = simParams
   const colorParamsRef = useRef(colorParams)
   colorParamsRef.current = colorParams
+  // Read by the scene-setup effect, which runs once at mount. A later variant
+  // change is applied by the structural-reset effect below, which does depend
+  // on variant, so the setup effect must not re-run for it.
+  const variantRef = useRef(variant)
+  variantRef.current = variant
 
 
   /**
@@ -233,7 +238,7 @@ export function CrystalGrowthViewer() {
       const strategyRng = forkDomain(masterSeed, DOMAIN.COLOR_STRATEGY)
       const bandRng = forkDomain(masterSeed, DOMAIN.BAND_COLORS)
       setActiveProfile(agateProfile, strategyRng, bandRng)
-      setVariantOverride(variant)
+      setVariantOverride(variantRef.current)
 
       // Initialize: partition runs async in a worker; kick it off and
       // move into growing phase. The animate loop will show the loading

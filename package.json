@@ -18,18 +18,17 @@
   },
   "dependencies": {
     "@tanstack/react-router": "^1.159.4",
-    "@tanstack/react-router-devtools": "^1.159.4",
     "@tanstack/react-start": "^1.159.4",
     "class-variance-authority": "^0.7.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "tailwind-merge": "^2.6.1",
     "three": "0.185.1",
     "typegpu": "^0.9.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/react-router-devtools": "^1.159.4",
     "@types/node": "^22.19.10",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
