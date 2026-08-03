@@ -7,69 +7,124 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOCS="$ROOT/docs"
-# Use an uncommon port so a running Vite server on :3000/:3010 can't
-# accidentally answer our prerender curls and bake dev-mode HTML into docs/.
+# A port nothing else defaults to. Not 4173: that is Vite's `preview` default,
+# and any other project previewing on it competes for this deploy.
 # Regression: commit e7f42e6 shipped docs/*.html referencing /src/styles/app.css and
 # /@react-refresh because the prerender port was occupied during deploy.
-PORT=4173
+PORT=45173
 
 echo "==> Building..."
 cd "$ROOT"
 bun run vite build
 
+# Regression, commit 78e1e90: docs/*.html shipped another project's Vite
+# `preview` page, which was serving on the port this script then used (4173).
+# Nothing here caught it because nothing here checked *who answered*:
+#   - Nitro binds the IPv6 wildcard while a `vite preview` binds IPv4
+#     127.0.0.1, so both listen on the same port number without EADDRINUSE.
+#     Our server was alive and listening the whole time; every liveness check
+#     passed honestly while `localhost` resolution handed the curls to the
+#     other server.
+#   - The dev-HTML probe only rejected dev markers, and a preview build is
+#     production-shaped HTML.
+# Two fixes below: pin one address family so a conflict is a real bind error,
+# and require every kept page to prove this app rendered it.
+
+# Pin the bind to a single address, and curl that exact address. With no
+# `localhost` indirection there is one socket in play, so a squatter on the
+# port makes our own server fail loudly instead of hiding behind it.
+BIND_HOST=127.0.0.1
+BASE="http://$BIND_HOST:$PORT"
+
+# Every HTML this script keeps must carry this marker. TanStack Start emits the
+# stream-barrier script only when this app server-rendered the response, so a
+# foreign server answering on $PORT cannot forge it. This is the load-bearing
+# gate: the port checks can be fooled, the rendered body cannot.
+MARKER='$tsr-stream-barrier'
+
 # Refuse to start if the port is already taken — don't silently scrape
 # whoever is sitting on it.
-if (echo >/dev/tcp/127.0.0.1/$PORT) 2>/dev/null; then
+if (echo >/dev/tcp/$BIND_HOST/$PORT) 2>/dev/null; then
   echo "!! Port $PORT is already in use. Stop the other process and retry." >&2
   exit 1
 fi
 
-echo "==> Starting server on :$PORT..."
-PORT=$PORT node .output/server/index.mjs &
+# Nitro reads NITRO_HOST || HOST for its bind address (.output/server/index.mjs).
+echo "==> Starting server on $BIND_HOST:$PORT..."
+HOST="$BIND_HOST" NITRO_HOST="$BIND_HOST" PORT="$PORT" node .output/server/index.mjs &
 SERVER_PID=$!
 trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
-# Wait for the server we just started — verify it's still alive AND answering.
+# True if the process listening on $PORT is the child we just spawned. Catches
+# a server that died or never bound; does not by itself prove our server is the
+# one answering, which is the marker check's job.
+owns_port() {
+  lsof -nP -a -p "$SERVER_PID" -iTCP:"$PORT" -sTCP:LISTEN -t >/dev/null 2>&1
+}
+
 for _ in $(seq 1 50); do
-  if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo "!! Production server exited before becoming ready." >&2
-    exit 1
-  fi
-  curl -sf -o /dev/null "http://localhost:$PORT/" && break
+  owns_port && curl -sf -o /dev/null "$BASE/" && break
   sleep 0.3
 done
 
-# Sanity check: the response must be production HTML, not dev HTML.
-# Dev HTML has /@react-refresh or /src/styles/. If we see those, abort before
-# overwriting docs/ with broken output.
-PROBE="$(curl -sf "http://localhost:$PORT/" || true)"
-if printf '%s' "$PROBE" | grep -qE '/@react-refresh|/@id/virtual:|/src/styles/|data-tanstack-router-dev-styles'; then
-  echo "!! Server returned dev-mode HTML — refusing to prerender." >&2
+if ! owns_port; then
+  LISTENER="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | tail -n +2 || true)"
+  echo "!! Our server (pid $SERVER_PID) is not listening on :$PORT." >&2
+  if [ -n "$LISTENER" ]; then
+    echo "   Something else holds the port:" >&2
+    printf '   %s\n' "$LISTENER" >&2
+  else
+    echo "   It exited before becoming ready. Run '.output/server/index.mjs' by hand to see why." >&2
+  fi
   exit 1
 fi
 
-trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+# Fetch a route, verify the body is our own server-rendered HTML, and only then
+# hand it back. Any failure aborts before docs/ is touched.
+fetch_route() {
+  local route="$1" dest="$2" body
+  body="$(curl -sf "$BASE$route")" || {
+    echo "!! $route did not return 200." >&2
+    return 1
+  }
+  if ! printf '%s' "$body" | grep -qF "$MARKER"; then
+    echo "!! $route is missing the SSR marker '$MARKER' — refusing to prerender." >&2
+    echo "   Got: $(printf '%s' "$body" | grep -o '<title>[^<]*</title>' | head -1)" >&2
+    return 1
+  fi
+  if printf '%s' "$body" | grep -qE '/@react-refresh|/@id/virtual:|/src/styles/|data-tanstack-router-dev-styles'; then
+    echo "!! $route returned dev-mode HTML — refusing to prerender." >&2
+    return 1
+  fi
+  printf '%s' "$body" > "$dest"
+}
 
-# Clean and seed with static assets. Hand-authored research lives under
-# research/ at the repo root, not under docs/.
-rm -rf "$DOCS"
-cp -r .output/public "$DOCS"
+# Prerender into a staging tree first. docs/ is replaced only after every route
+# passes, so an abort halfway through can't leave a half-broken site behind.
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/art-prerender.XXXXXX")"
+trap "kill $SERVER_PID 2>/dev/null || true; rm -rf '$STAGE'" EXIT
 
-# Prerender routes
+# Seed with static assets. Hand-authored research lives under research/ at the
+# repo root, not under docs/.
+cp -r .output/public "$STAGE/site"
+
 for route in / /projects/id1 /projects/tension /ui; do
   if [ "$route" = "/" ]; then
-    curl -sf "http://localhost:$PORT/" > "$DOCS/index.html"
+    fetch_route / "$STAGE/site/index.html"
   else
-    mkdir -p "$DOCS$route"
-    curl -sf "http://localhost:$PORT$route" > "$DOCS$route/index.html"
+    mkdir -p "$STAGE/site$route"
+    fetch_route "$route" "$STAGE/site$route/index.html"
   fi
   echo "  $route"
 done
 
 # SPA fallback + GitHub Pages config
-cp "$DOCS/index.html" "$DOCS/404.html"
-echo "quantizor.art" > "$DOCS/CNAME"
-touch "$DOCS/.nojekyll"
+cp "$STAGE/site/index.html" "$STAGE/site/404.html"
+echo "quantizor.art" > "$STAGE/site/CNAME"
+touch "$STAGE/site/.nojekyll"
+
+rm -rf "$DOCS"
+mv "$STAGE/site" "$DOCS"
 
 kill $SERVER_PID 2>/dev/null || true
 echo "==> docs/ ready"

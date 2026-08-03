@@ -133,6 +133,6 @@ bun run deploy      # build and prerender into docs/ (user-run)
 ```
 
 Repo-specific facts
-- Prerender uses port 4173 so a running Vite port cannot poison `docs/`. See `scripts/deploy.sh`.
+- Prerender keeps a page only if the body carries the TanStack Start SSR marker `$tsr-stream-barrier`. The port is not protection on its own: another project's `vite preview` can hold the same port, and a wildcard-IPv6 bind next to an IPv4 one lets both servers listen at once, so a liveness check passes while a foreign server answers. `scripts/deploy.sh` owns the port number and the bind address.
 - Dev snapshot endpoint lives in `vite.config.ts` (`/__snapshot`) for deterministic render captures.
 - Tension DPR is `GRID_SCALE` (pixel-stable grid), not raw `devicePixelRatio`.

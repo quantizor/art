@@ -16,7 +16,7 @@ Rendering review
 - Prefer container queries for slot-sized layouts over viewport-only breakpoints when components embed in variable slots.
 
 Build and prerender
-- bun run build runs typecheck then Vite build. bun run deploy prerenders into docs/ on port 4173 so a running Vite server cannot poison output.
+- bun run build runs typecheck then Vite build. bun run deploy prerenders into docs/ and keeps only pages carrying the SSR marker, so another server on the prerender port cannot poison output. See scripts/deploy.sh.
 - Do not author performance claims about bundle size without running the build and inspecting output.
 
 Profiling

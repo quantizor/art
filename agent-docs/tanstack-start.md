@@ -93,4 +93,4 @@ Same-origin server functions invoked through the Start RPC layer inherit the bro
 
 ## Static deploy
 
-Prerender output lands in `docs/` via `scripts/deploy.sh`. Prerender uses port **4173** so a running Vite server cannot poison the static tree.
+Prerender output lands in `docs/` via `scripts/deploy.sh`. A page is kept only if its body carries the SSR marker `$tsr-stream-barrier`, which `@tanstack/router-core` emits when this app renders the response, so a foreign server on the prerender port cannot poison the static tree. `scripts/deploy.sh` owns the port and bind address.
