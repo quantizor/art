@@ -21,8 +21,8 @@ Planning
 - Question over-engineering; propose the simpler alternative when complexity does not buy observable behavior.
 
 Dev server
-- Never run bun dev, bun start, bun run preview, or a raw Vite server. The user runs the app via devctl.
-- Check devctl status when server state matters; do not spawn a second server.
+- Never run bun dev, bun start, bun run preview, or a raw Vite server. Assume the app is already being served at http://art.localhost:3011/ and reuse it.
+- When server state matters, check whether that host answers before acting; do not spawn a second server on the same port.
 
 Parallel sessions
 - Other agents may edit the same tree. Do not reset or stash away another session's in-flight files.

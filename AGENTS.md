@@ -16,8 +16,8 @@ Local carve-outs (override global defaults for this repo)
 - Accessibility work is deprioritized. Do not open WCAG remediation unless the user asks. Keep the `/ui` showcase in sync when design-system APIs change.
 
 Agent directives
-- Never run the dev server. Never run `bun dev`, `bun start`, `bun run preview`, or any long-running preview. The user runs the app; `devservers.json` declares it and `devctl status` reports whether it is up. Verification is `bun run typecheck`, `bun test`, and `bun run build` (or `bun run verify`).
-- Manage this project's server only through `devctl`. Do not spawn a raw Vite/Bun server beside it.
+- Never run the dev server. Never run `bun dev`, `bun start`, `bun run preview`, or any long-running preview. Assume the app is already being served at `http://art.localhost:3011/` and reuse it. Verification is `bun run typecheck`, `bun test`, and `bun run build` (or `bun run verify`).
+- Do not spawn a second Vite/Bun server beside the running one; the port is taken and a stray server splits the logs.
 - When planning, include Do's and Don'ts, concrete code samples, and pointers into this file or `agent-docs/`.
 - Tracker for deferred work: GitHub Issues. Do not use Changesets (package is `private: true` and unpublished).
 - `docs/` is generated Pages output. Never author documentation there. Agent standards live under `agent-docs/`; research notes live under `research/`.

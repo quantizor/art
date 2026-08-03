@@ -41,7 +41,7 @@ bun install
 bun dev
 ```
 
-The app listens on http://art.localhost:3011/ when managed with `devctl`.
+The dev server listens on http://art.localhost:3011/.
 
 Verification:
 

@@ -69,6 +69,6 @@ When changing `src/ui/` component APIs or tokens, update the `/ui` showcase and 
 
 ## Utilities in components
 
-- Merge classes with `tailwind-merge` and `class-variance-authority` following existing `src/ui/` patterns.
+- Compose variants with `class-variance-authority` following existing `src/ui/` patterns, rather than concatenating utilities that fight each other.
 - Prefer CSS variables from `theme.css` (`var(--color-primary)`) over hard-coded hex in route files.
 - Prefer container queries (`@container`) for slot-sized layouts inside project viewers.

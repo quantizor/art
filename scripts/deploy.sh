@@ -8,27 +8,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DOCS="$ROOT/docs"
 # A port nothing else defaults to. Not 4173: that is Vite's `preview` default,
-# and any other project previewing on it competes for this deploy.
-# Regression: commit e7f42e6 shipped docs/*.html referencing /src/styles/app.css and
-# /@react-refresh because the prerender port was occupied during deploy.
+# and any other project previewing on it competes for this deploy. An occupied
+# prerender port is how dev-mode HTML ends up baked into docs/.
 PORT=45173
 
 echo "==> Building..."
 cd "$ROOT"
 bun run vite build
 
-# Regression, commit 78e1e90: docs/*.html shipped another project's Vite
-# `preview` page, which was serving on the port this script then used (4173).
-# Nothing here caught it because nothing here checked *who answered*:
-#   - Nitro binds the IPv6 wildcard while a `vite preview` binds IPv4
-#     127.0.0.1, so both listen on the same port number without EADDRINUSE.
-#     Our server was alive and listening the whole time; every liveness check
-#     passed honestly while `localhost` resolution handed the curls to the
-#     other server.
-#   - The dev-HTML probe only rejected dev markers, and a preview build is
-#     production-shaped HTML.
-# Two fixes below: pin one address family so a conflict is a real bind error,
-# and require every kept page to prove this app rendered it.
+# Prerendering trusts whatever answers on $PORT, so the two guards below decide
+# whether docs/ is this app's output or a stranger's. Liveness alone cannot tell
+# them apart: Nitro binds the IPv6 wildcard while a `vite preview` binds IPv4
+# 127.0.0.1, so both listen on one port number without EADDRINUSE, our server
+# stays alive and listening, and `localhost` resolution decides which one the
+# curls reach. A "is this dev HTML" probe cannot tell them apart either, since
+# another project's preview build is production-shaped HTML.
 
 # Pin the bind to a single address, and curl that exact address. With no
 # `localhost` indirection there is one socket in play, so a squatter on the

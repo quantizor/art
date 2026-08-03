@@ -37,7 +37,6 @@ src/ui/
 ├── DiagonalDivider.tsx   # Separator primitive
 ├── ToggleGroup.tsx       # Toggle selection group
 ├── ButtonGroup.tsx       # Button grouping
-├── examples.tsx          # Usage examples
 └── README.md             # This file
 ```
 
@@ -423,12 +422,9 @@ function IconButton({ icon, ...props }: ButtonProps & { icon: ReactNode }) {
 
 ## Examples
 
-See `examples.tsx` for comprehensive usage examples including:
-
-- All component variations
-- Common patterns
-- Speed dial interface example
-- Composition patterns
+The `/ui` route is the living showcase: it renders every component against the
+real tokens, so it is the place to see variations, composition patterns, and the
+speed dial in context. Keep `src/routes/ui.tsx` in step when this folder changes.
 
 ## Best Practices
 
